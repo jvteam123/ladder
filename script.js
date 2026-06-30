@@ -5194,33 +5194,7 @@ function renderMatchView(el){
   if(!hasRRSession && !hasOpenPlaySession){
     el.innerHTML = `
       <div class="empty-state">
-        <div class="big"><svg width="96" height="96" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto;">
-  <defs>
-    <radialGradient id="bg1" cx="38%" cy="35%" r="60%"><stop offset="0%" stop-color="#f0ff7a"/><stop offset="45%" stop-color="#d7f23d"/><stop offset="100%" stop-color="#8aaa00"/></radialGradient>
-    <radialGradient id="sh1" cx="35%" cy="30%" r="40%"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
-    <radialGradient id="sd1" cx="55%" cy="68%" r="45%"><stop offset="0%" stop-color="#4a6600" stop-opacity="0.45"/><stop offset="100%" stop-color="#4a6600" stop-opacity="0"/></radialGradient>
-    <clipPath id="bc1"><circle cx="100" cy="100" r="90"/></clipPath>
-  </defs>
-  <circle cx="100" cy="100" r="90" fill="url(#bg1)"/>
-  <g clip-path="url(#bc1)" fill="#6a9200">
-    <circle cx="74" cy="62" r="9"/><circle cx="100" cy="58" r="9"/><circle cx="126" cy="62" r="9"/>
-    <circle cx="61" cy="86" r="9"/><circle cx="87" cy="82" r="9"/><circle cx="113" cy="82" r="9"/><circle cx="139" cy="86" r="9"/>
-    <circle cx="52" cy="110" r="9"/><circle cx="78" cy="106" r="9"/><circle cx="104" cy="106" r="9"/><circle cx="130" cy="106" r="9"/><circle cx="152" cy="110" r="9"/>
-    <circle cx="61" cy="134" r="9"/><circle cx="87" cy="130" r="9"/><circle cx="113" cy="130" r="9"/><circle cx="139" cy="134" r="9"/>
-    <circle cx="74" cy="156" r="9"/><circle cx="100" cy="152" r="9"/><circle cx="126" cy="156" r="9"/>
-  </g>
-  <g clip-path="url(#bc1)" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1">
-    <circle cx="74" cy="62" r="9"/><circle cx="100" cy="58" r="9"/><circle cx="126" cy="62" r="9"/>
-    <circle cx="61" cy="86" r="9"/><circle cx="87" cy="82" r="9"/><circle cx="113" cy="82" r="9"/><circle cx="139" cy="86" r="9"/>
-    <circle cx="52" cy="110" r="9"/><circle cx="78" cy="106" r="9"/><circle cx="104" cy="106" r="9"/><circle cx="130" cy="106" r="9"/><circle cx="152" cy="110" r="9"/>
-    <circle cx="61" cy="134" r="9"/><circle cx="87" cy="130" r="9"/><circle cx="113" cy="130" r="9"/><circle cx="139" cy="134" r="9"/>
-    <circle cx="74" cy="156" r="9"/><circle cx="100" cy="152" r="9"/><circle cx="126" cy="156" r="9"/>
-  </g>
-  <circle cx="100" cy="100" r="90" fill="url(#sd1)"/>
-  <circle cx="100" cy="100" r="90" fill="url(#sh1)"/>
-  <ellipse cx="76" cy="80" rx="22" ry="13" fill="#ffffff" opacity="0.18" transform="rotate(-20,76,80)"/>
-  <circle cx="100" cy="100" r="90" fill="none" stroke="#7aaa00" stroke-width="1.5"/>
-</svg></div>
+        <div class="big"><img src="./balls.png" style="width:140px;height:140px;object-fit:contain;display:block;margin:0 auto;" alt="Pickleball balls"></div>
         <div class="et">Choose Match Mode</div>
         <p>How do you want to run today's session?</p>
         <button class="btn btn-primary" style="margin-top:14px; width:100%; padding:16px; display:flex; flex-direction:column; gap:4px; text-align:left;" data-action="pick-mode-openplay">
