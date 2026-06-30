@@ -8184,5 +8184,3 @@ const _kitchenLadderSig = Object.freeze({
   }
 
 })();
-
-</script>
