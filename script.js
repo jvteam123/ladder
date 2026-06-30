@@ -7,9 +7,61 @@
 // (disabled)
 
 /* ============================================================
-   DOMAIN LOCK — DISABLED
+   DOMAIN LOCK + COPY PROTECTION
    ============================================================ */
-// (disabled)
+(function(){
+  // Allowed origins — add localhost for your own dev use
+  var _a = ['mladder.vercel.app'];
+  var _h = location.hostname;
+  var _ok = _a.some(function(d){ return _h === d || _h.endsWith('.'+d); });
+  if(!_ok){
+    document.documentElement.innerHTML =
+      '<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#11151A;color:#D7F23D;'+
+      'font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;'+
+      'height:100vh;text-align:center;padding:32px;}h1{font-size:2rem;margin-bottom:12px;}'+
+      'p{color:#888;font-size:1rem;max-width:340px;}</style>'+
+      '<body><div><h1>⛔ Unauthorized</h1>'+
+      '<p>This app is only licensed to run on<br><strong style="color:#D7F23D">mladder.vercel.app</strong></p></div></body>';
+    throw new Error('Unauthorized domain: ' + _h);
+  }
+})();
+
+(function(){
+  // Disable right-click context menu
+  document.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+  // Block common view-source / inspect shortcuts
+  document.addEventListener('keydown', function(e){
+    var k = e.key, c = e.ctrlKey||e.metaKey, s = e.shiftKey;
+    // Ctrl+U (view source), Ctrl+S (save), Ctrl+Shift+I/J/C (devtools), F12
+    if(
+      (c && k==='u') ||
+      (c && k==='s') ||
+      (c && s && (k==='I'||k==='i')) ||
+      (c && s && (k==='J'||k==='j')) ||
+      (c && s && (k==='C'||k==='c')) ||
+      k==='F12'
+    ){ e.preventDefault(); e.stopPropagation(); return false; }
+  });
+
+  // DevTools size-change detection
+  var _dt = {open:false};
+  var _threshold = 160;
+  setInterval(function(){
+    var w = window.outerWidth - window.innerWidth;
+    var h = window.outerHeight - window.innerHeight;
+    var isOpen = w > _threshold || h > _threshold;
+    if(isOpen && !_dt.open){
+      _dt.open = true;
+      var el = document.getElementById('ml-devtools-warning');
+      if(el) el.classList.add('show');
+    } else if(!isOpen && _dt.open){
+      _dt.open = false;
+      var el2 = document.getElementById('ml-devtools-warning');
+      if(el2) el2.classList.remove('show');
+    }
+  }, 1000);
+})();
 
 /* ============================================================
    STORAGE KEYS
