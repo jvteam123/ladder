@@ -5929,6 +5929,7 @@ function renderSettingsView(el){
     <div class="section-title" style="margin-top:20px;">Fixed Duos 🔗</div>
     <div class="card">
       <p class="helper-text" style="margin-top:0;">Lock two players together so they always play on the same team when both are active.</p>
+      <p class="helper-text" style="margin-top:0; color:var(--ball);">⚠️ Only honored in <b>Smart Auto-Match</b>. Round Robin and Paddle Stack Queue don't check duos, so partners can still end up on opposing teams in those modes.</p>
       ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
           <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
@@ -6526,7 +6527,7 @@ document.addEventListener('click', function(e){
       if(eligible.length < 2){ toast('All active players are already in fixed duos.', 'warning'); break; }
       openModal(`
         <div class="modal-title">Add Fixed Duo 🔗</div>
-        <div class="modal-sub">Select two players who should always be on the same team.</div>
+        <div class="modal-sub">Select two players who should always be on the same team. <b style="color:var(--ball);">Only honored in Smart Auto-Match</b> — Round Robin and Paddle Stack Queue don't check duos.</div>
         <div class="field" style="margin-top:10px;">
           <label>Player 1</label>
           <select id="duoP1">
