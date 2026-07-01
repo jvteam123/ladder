@@ -979,12 +979,24 @@ function togglePlayerActive(id){
     toast(`${p.name} is live on a court — use the swap icon to sub them out, or finish/close that court first.`, 'warning');
     return;
   }
+  if(p.active && state.paddleStack && state.paddleStack.courts.some(c => c.teamA.includes(id) || c.teamB.includes(id))) {
+    toast(`${p.name} is live on a court — use "Switch Player" to sub them out first.`, 'warning');
+    return;
+  }
   const wasInactive = !p.active;
   p.active = !p.active;
   if(!p.active) {
     p.consecutiveSitOuts = 0;
     p.sitOutPriority = 0;
     p.waitingRounds = 0;
+    // Paddle Stack: pull them out of the queue and winner/loser blocks so
+    // they can't get swept into a future court after going inactive.
+    if (state.paddleStack) {
+      const ps = state.paddleStack;
+      ps.queue = ps.queue.filter(e => e.id !== id);
+      ps.wBlock = ps.wBlock.filter(e => e.id !== id);
+      ps.lBlock = ps.lBlock.filter(e => e.id !== id);
+    }
   }
 
   // Paddle Stack: priority check-in
@@ -1221,7 +1233,7 @@ const STATUS_DEFS = {
   tired:      { label:'😴 Tired',       desc:'Sits out of new matches until cleared.',   pillClass:'pill-cond-tired' },
   injured:    { label:'🤕 Injured',     desc:'Sits out of new matches until cleared.',   pillClass:'pill-cond-injured' },
   cant_play:  { label:'🙅 Can\u2019t Play', desc:'Sits out of new matches until cleared.', pillClass:'pill-cond-cantplay' },
-  not_coming: { label:'🚫 Not Coming',  desc:'Removed from today\u2019s rotation entirely.', pillClass:'pill-paused' },
+  not_coming: { label:'🏠 Gone Home',  desc:'Done for today — removed from the rotation entirely.', pillClass:'pill-paused' },
 };
 
 function playerStatusKey(p){
@@ -1264,19 +1276,29 @@ function setPlayerStatus(id, status){
   if(prevKey === status){ closeModal(); return; }
 
   const inLiveMatch = (state.current && (state.current.teamA.includes(id) || state.current.teamB.includes(id)))
-    || (state.currentGeneration && state.currentGeneration.matches.some(m => m.status !== 'done' && (m.teamA.includes(id) || m.teamB.includes(id))));
+    || (state.currentGeneration && state.currentGeneration.matches.some(m => m.status !== 'done' && (m.teamA.includes(id) || m.teamB.includes(id))))
+    || (Array.isArray(state.rotationCourts) && state.rotationCourts.some(c => c && c.status === 'active' && (c.teamA.includes(id) || c.teamB.includes(id))))
+    || (state.paddleStack && state.paddleStack.courts.some(c => c.teamA.includes(id) || c.teamB.includes(id)));
 
   if(status === 'not_coming'){
     if(p.active && inLiveMatch){
       closeModal();
-      toast(`${p.name} is in an unfinished match — finish, skip, or replace them first.`, 'warning');
+      toast(`${p.name} is in an unfinished match — finish, skip, or replace/swap them out first.`, 'warning');
       return;
     }
     p.active = false;
     p.condition = 'ok';
     p.consecutiveSitOuts = 0; p.sitOutPriority = 0; p.waitingRounds = 0;
+    // Paddle Stack: pull them out of the queue and winner/loser blocks so
+    // they can't get swept into a future court after heading home.
+    if (state.paddleStack) {
+      const ps = state.paddleStack;
+      ps.queue = ps.queue.filter(e => e.id !== id);
+      ps.wBlock = ps.wBlock.filter(e => e.id !== id);
+      ps.lBlock = ps.lBlock.filter(e => e.id !== id);
+    }
     saveAll(); renderAll(); closeModal();
-    toast(`${p.name} marked Not Coming.`, 'success');
+    toast(`${p.name} marked Gone Home.`, 'success');
     return;
   }
 
@@ -6885,6 +6907,21 @@ function psInit() {
 function psFillCourts() {
   const ps = state.paddleStack;
   if (!ps) return;
+  // Defensive: drop anyone who went inactive (Gone Home / Tired / Injured /
+  // Can't Play) but is still sitting in the queue, so they never get pulled
+  // onto a court after saying they're done.
+  ps.queue = ps.queue.filter(e => {
+    const pl = getPlayer(e.id);
+    return pl && pl.active && (pl.condition || 'ok') === 'ok';
+  });
+  ps.wBlock = ps.wBlock.filter(e => {
+    const pl = getPlayer(e.id);
+    return pl && pl.active && (pl.condition || 'ok') === 'ok';
+  });
+  ps.lBlock = ps.lBlock.filter(e => {
+    const pl = getPlayer(e.id);
+    return pl && pl.active && (pl.condition || 'ok') === 'ok';
+  });
   const maxCourts = ps.numCourts;
   while (ps.courts.length < maxCourts && ps.queue.length >= 4) {
     const courtNum = ps.courts.length + 1;
