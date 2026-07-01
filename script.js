@@ -82,15 +82,12 @@ const DEFAULT_SETTINGS = {
   matchMode: 'Rotation', // 'Rotation' or 'RoundRobin'
   numCourts: 1,
   winnerVsWinner: true,
-  equalPlayPriority: true,
-  smartBalance: true,
   maxRepeatTeammates: 2,
   maxRepeatOpponents: 3,
   audioScoring: true,    // play sound cues for +/- points, side-outs, and game wins
   voiceAnnounce: true,   // speak the score call (server's score first) and side-out announcements out loud
   winningScore: 11,      // first team to reach this score (win by 2) takes the match
   raceToTwo: true,        // when both teams reach 10-10 ("Love-Love"), offer a sudden-death Race to 2
-  rematchPrevention: true, // prevent rematching players who faced each other in the immediately previous match
   sessionPlan: null,      // { totalMatches, gamesPerPlayer, label, matchesAtStart } — active Round Robin session length plan, or null if none chosen yet
   generateFullSchedule: false // Round Robin "one-time generation": build every round of the chosen session length right away instead of one generation at a time
 };
@@ -1345,7 +1342,6 @@ function combinations(arr, k){
 // Returns a Set of opponent id pairs that appeared in the last completed match,
 // used by rematch prevention to add a heavy penalty to re-facing the same players.
 function lastMatchOpponentPairs(){
-  if(!state.settings.rematchPrevention) return new Set();
   const last = state.matches[state.matches.length - 1];
   if(!last) return new Set();
   const pairs = new Set();
@@ -1882,16 +1878,6 @@ function openCSOPSetupModal(activeCount) {
       </div>
       <div class="toggle-row">
         <div>
-          <div class="t-label">🚫 Rematch Prevention</div>
-          <div class="t-hint">Avoid facing the same opponents as the very last match.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="csoRematchToggle" ${state.settings.rematchPrevention !== false ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <div>
           <div class="t-label">🏁 Race to 2</div>
           <div class="t-hint">Offer a sudden-death Race to 2 when both teams hit 10–10.</div>
         </div>
@@ -1913,7 +1899,6 @@ function doInitRotationCourts() {
   // Read settings from the modal
   const scoreEl = document.getElementById('csoWinScoreInput');
   const wvwEl   = document.getElementById('csoWvWToggle');
-  const remEl   = document.getElementById('csoRematchToggle');
   const raceEl  = document.getElementById('csoRaceToggle');
 
   if (scoreEl) {
@@ -1921,7 +1906,6 @@ function doInitRotationCourts() {
     state.settings.winningScore = (isNaN(v) || v < 1) ? 11 : v;
   }
   if (wvwEl)  state.settings.winnerVsWinner   = wvwEl.checked;
-  if (remEl)  state.settings.rematchPrevention = remEl.checked;
   if (raceEl) state.settings.raceToTwo        = raceEl.checked;
 
   closeModal();
@@ -2703,36 +2687,14 @@ function confirmSessionSetup(){
 function openRotationConfirmModal(){
   const winningScore = state.settings.winningScore || 11;
 
-  function toggleRow(id, label, hint, checked){
-    return `
-      <div class="toggle-row">
-        <div>
-          <div class="t-label">${label}</div>
-          <div class="t-hint">${hint}</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="${id}" ${checked ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-    `;
-  }
-
   openModal(`
     <div class="modal-title">Confirm &amp; Generate</div>
-    <div class="modal-sub" style="line-height:1.6;">Review balancing settings before generating the match.</div>
+    <div class="modal-sub" style="line-height:1.6;">Review settings before generating the match.</div>
 
-    <div class="card" style="margin:0 0 10px; padding:4px 14px;">
+    <div class="card" style="margin:0;">
       <div class="session-confirm-row"><span class="k">Match Mode</span><span class="v" style="font-family:inherit; color:var(--court);">Rotation</span></div>
       <div class="session-confirm-row"><span class="k">Winning Score</span><span class="v">${winningScore}</span></div>
       <div class="session-confirm-row"><span class="k">Active Players</span><span class="v">${activePlayers().length}</span></div>
-    </div>
-
-    <div class="eyebrow" style="margin:0 2px 6px;">Balancing &amp; Fairness</div>
-    <div class="card" style="margin:0;">
-      ${toggleRow('rotEqualPlayToggle', 'Equal Play Priority', 'Prioritizes players with the fewest games played so far.', !!state.settings.equalPlayPriority)}
-      ${toggleRow('rotSmartBalanceToggle', 'Smart Balance Engine', 'Reduces repeat teammate and opponent pairings.', !!state.settings.smartBalance)}
-      ${toggleRow('rotRematchPreventionToggle', 'Rematch Prevention', 'Avoids re-pairing players who just faced each other.', state.settings.rematchPrevention !== false)}
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
@@ -2743,12 +2705,6 @@ function openRotationConfirmModal(){
 }
 
 function confirmRotationGenerate(){
-  const eqplEl = document.getElementById('rotEqualPlayToggle');
-  const smartEl = document.getElementById('rotSmartBalanceToggle');
-  const rematchEl = document.getElementById('rotRematchPreventionToggle');
-  if(eqplEl) state.settings.equalPlayPriority = eqplEl.checked;
-  if(smartEl) state.settings.smartBalance = smartEl.checked;
-  if(rematchEl) state.settings.rematchPrevention = rematchEl.checked;
   saveAll();
   closeModal();
   nextRotationMatch();
@@ -2933,9 +2889,6 @@ function openSessionConfirmModal(opt, totalMatches, gpp, playerCount){
     <div class="eyebrow" style="margin:0 2px 6px;">Balancing &amp; Fairness</div>
     <div class="card" style="margin:0 0 ${state.settings.matchMode === 'RoundRobin' ? '10px' : '0'};">
       ${toggleRow('sessionWinnerVsWinnerToggle', 'Winner vs Winner / Loser vs Loser', "Next generation pairs last generation's winners together and losers together.", !!state.settings.winnerVsWinner)}
-      ${toggleRow('sessionEqualPlayToggle', 'Equal Play Priority', 'Prioritizes players with the fewest games played so far.', !!state.settings.equalPlayPriority)}
-      ${toggleRow('sessionSmartBalanceToggle', 'Smart Balance Engine', 'Reduces repeat teammate and opponent pairings.', !!state.settings.smartBalance)}
-      ${toggleRow('sessionRematchPreventionToggle', 'Rematch Prevention', 'Avoids re-pairing players who just faced each other.', state.settings.rematchPrevention !== false)}
     </div>
 
     ${state.settings.matchMode === 'RoundRobin' ? `
@@ -2964,9 +2917,6 @@ function confirmSessionPlanAndGenerate(planId, totalMatches, gpp){
   const courtsEl = document.getElementById('sessionNumCourtsInput');
   const scoreEl = document.getElementById('sessionWinningScoreInput');
   const wvwEl = document.getElementById('sessionWinnerVsWinnerToggle');
-  const eqplEl = document.getElementById('sessionEqualPlayToggle');
-  const smartEl = document.getElementById('sessionSmartBalanceToggle');
-  const rematchEl = document.getElementById('sessionRematchPreventionToggle');
   const fullScheduleEl = document.getElementById('sessionFullScheduleToggle');
 
   if(courtsEl){
@@ -2978,9 +2928,6 @@ function confirmSessionPlanAndGenerate(planId, totalMatches, gpp){
     state.settings.winningScore = (isNaN(v) || v < 1) ? 11 : v;
   }
   if(wvwEl) state.settings.winnerVsWinner = wvwEl.checked;
-  if(eqplEl) state.settings.equalPlayPriority = eqplEl.checked;
-  if(smartEl) state.settings.smartBalance = smartEl.checked;
-  if(rematchEl) state.settings.rematchPrevention = rematchEl.checked;
   if(fullScheduleEl) state.settings.generateFullSchedule = fullScheduleEl.checked;
 
   state.settings.sessionPlan = {
@@ -5927,28 +5874,6 @@ function renderSettingsView(el){
 
       <div class="toggle-row">
         <div>
-          <div class="t-label">Equal Play Priority</div>
-          <div class="t-hint">Prioritizes players with the fewest games played so far.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="equalPlayToggle" ${state.settings.equalPlayPriority ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div class="t-label">Smart Balance Engine</div>
-          <div class="t-hint">Reduces repeat teammate and opponent pairings when forming matches.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="smartBalanceToggle" ${state.settings.smartBalance !== false ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-
-      <div class="toggle-row">
-        <div>
           <div class="t-label">🔊 Audio Scoring</div>
           <div class="t-hint">Play sound cues for +/- points, side-outs, and game wins.</div>
         </div>
@@ -5976,17 +5901,6 @@ function renderSettingsView(el){
         </div>
         <label class="switch">
           <input type="checkbox" id="raceToTwoToggle" ${state.settings.raceToTwo ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-
-      <div class="toggle-row">
-        <div>
-          <div class="t-label">🚫 Rematch Prevention</div>
-          <div class="t-hint">Avoids rematching players who faced each other in the immediately previous match.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="rematchPreventionToggle" ${state.settings.rematchPrevention !== false ? 'checked' : ''}>
           <div class="track"></div><div class="thumb"></div>
         </label>
       </div>
@@ -6029,23 +5943,17 @@ function renderSettingsView(el){
 function saveSettingsFromForm(){
   const numCourtsVal = document.getElementById('numCourtsInput') ? parseInt(document.getElementById('numCourtsInput').value, 10) || 1 : 1;
   const winnerVsWinnerVal = document.getElementById('winnerVsWinnerToggle') ? document.getElementById('winnerVsWinnerToggle').checked : true;
-  const equalPlayVal = document.getElementById('equalPlayToggle') ? document.getElementById('equalPlayToggle').checked : true;
-  const smartBalanceVal = document.getElementById('smartBalanceToggle') ? document.getElementById('smartBalanceToggle').checked : true;
   const audioScoringVal = document.getElementById('audioScoringToggle') ? document.getElementById('audioScoringToggle').checked : true;
   const voiceAnnounceVal = document.getElementById('voiceAnnounceToggle') ? document.getElementById('voiceAnnounceToggle').checked : true;
   const winningScoreRaw = document.getElementById('winningScoreInput') ? parseInt(document.getElementById('winningScoreInput').value, 10) : 11;
   const raceToTwoVal = document.getElementById('raceToTwoToggle') ? document.getElementById('raceToTwoToggle').checked : false;
-  const rematchPreventionVal = document.getElementById('rematchPreventionToggle') ? document.getElementById('rematchPreventionToggle').checked : true;
 
   state.settings.numCourts = numCourtsVal;
   state.settings.winnerVsWinner = winnerVsWinnerVal;
-  state.settings.equalPlayPriority = equalPlayVal;
-  state.settings.smartBalance = smartBalanceVal;
   state.settings.audioScoring = audioScoringVal;
   state.settings.voiceAnnounce = voiceAnnounceVal;
   state.settings.winningScore = (isNaN(winningScoreRaw) || winningScoreRaw < 1) ? 11 : winningScoreRaw;
   state.settings.raceToTwo = raceToTwoVal;
-  state.settings.rematchPrevention = rematchPreventionVal;
 
   if(state.currentGeneration) advanceRRQueue(); // pick up newly-freed courts right away if the count went up
 
