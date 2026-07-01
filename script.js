@@ -798,6 +798,22 @@ function honorFixedDuosInFour(four){
 /* ============================================================
    PLAYER MANAGEMENT ACTIONS
    ============================================================ */
+// Instead of just warning that there aren't enough players to generate a
+// match, jump the user straight to the Players tab and focus the "add
+// player" input so they can fix it in one tap.
+function goToAddPlayer(message){
+  if(message) toast(message, 'warning');
+  const tabNav = document.getElementById('tabNav');
+  if(tabNav){
+    const playersTab = tabNav.querySelector('[data-tab="players"]');
+    if(playersTab) playersTab.click();
+  }
+  setTimeout(()=>{
+    const nameInput = document.getElementById('newPlayerName') || document.querySelector('input[placeholder*="name"]') || document.querySelector('input[placeholder*="Name"]');
+    if(nameInput){ nameInput.focus(); nameInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }, 250);
+}
+
 function addPlayer(name, isSub, duprRating){
   name = (name||'').trim();
   if(!name){ toast('Enter a name first.', 'warning'); return; }
@@ -1784,7 +1800,7 @@ function refreshAllNextMatchPreviews(onlyMissing) {
 }
 function initRotationCourts() {
   const pool = csoActivePlayers();
-  if (pool.length < 4) { toast('Need at least 4 active players.', 'warning'); return; }
+  if (pool.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return; }
 
   // If courts are already live, skip the modal and just fill empty slots
   if (!Array.isArray(state.rotationCourts)) state.rotationCourts = [];
@@ -1911,7 +1927,7 @@ function doInitRotationCourts() {
   closeModal();
 
   const pool = csoActivePlayers();
-  if (pool.length < 4) { toast('Need at least 4 active players.', 'warning'); return; }
+  if (pool.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return; }
 
   const numCourts = clamp(parseInt(state.settings.numCourts, 10) || 1, 1, 10);
   state.rotationCourts = [];
@@ -2436,7 +2452,7 @@ function renderUpNextCard(m) {
 
 function nextRotationMatch(){
   const pool = selectionPool();
-  if(pool.length < 4){ toast('Need at least 4 active players.', 'warning'); return; }
+  if(pool.length < 4){ goToAddPlayer('Add a few more players to start — you need at least 4.'); return; }
 
   // --- STEP 1: strict fairness tier --------------------------------------
   // Start with everyone tied at the minimum gamesPlayed. Resolve fixed-duo
@@ -2603,7 +2619,7 @@ function syncSitOutQueue(){
 
 function generateRoundRobinGeneration() {
   const activeList = activePlayers().slice();
-  if(activeList.length < 4) { toast('Need at least 4 active players.', 'warning'); return; }
+  if(activeList.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return; }
 
   const plan = state.settings.sessionPlan;
   const planIsFinished = plan && (state.matches.length - plan.matchesAtStart) >= plan.totalMatches;
@@ -3178,7 +3194,7 @@ function buildOneGeneration(activeList, genId, opts) {
 function _doGenerateRoundRobinGeneration(activeList) {
   if(!activeList) {
     activeList = activePlayers().slice();
-    if(activeList.length < 4) { toast('Need at least 4 active players for Round Robin.', 'warning'); return; }
+    if(activeList.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return; }
   }
 
   const genId = state.round + 1;
@@ -6934,7 +6950,7 @@ function initInstallBanner(){
 function psInit() {
   // Build initial queue from active roster in check-in order (roster order)
   const pool = activePlayers().slice();
-  if (pool.length < 4) { toast('Need at least 4 active players.', 'warning'); return false; }
+  if (pool.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return false; }
 
   // Initial queue: groups of 4 in roster order, all tagged 'N' (new)
   const queue = [];
