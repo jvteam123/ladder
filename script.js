@@ -6126,8 +6126,10 @@ document.addEventListener('click', function(e){
     case 'ps-do-skip': psSkipMatch(t.dataset.court); break;
     case 'ps-switch-player': openPsSwitchPlayerModal(t.dataset.court); break;
     case 'ps-switch-player-force': openPsSwitchPlayerModal(t.dataset.court, true); break;
+    case 'ps-switch-player-force-partner': openPsSwitchPlayerModal(t.dataset.court, false, true); break;
     case 'ps-pick-swap-out': openPsPickSwapInModal(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
     case 'ps-do-switch-player': psdoSwitchPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), parseInt(t.dataset.queueIdx, 10)); break;
+    case 'ps-do-switch-player-sub': psdoSwitchPlayerFromSub(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), t.dataset.sub); break;
     case 'ps-do-partner-swap': psdoPartnerSwap(t.dataset.court, t.dataset.swap); break;
     case 'ps-rest-player': psRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
     case 'ps-do-rest-player': psDoRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
@@ -7867,7 +7869,7 @@ function psTag(m, team, slot) {
 //                    re-pair within the same side so both players stay on court
 //                    but swap their partners (A1 ↔ B1 style swap), keeping the
 //                    upcoming match type intact.
-function openPsSwitchPlayerModal(courtId, forcePlainSwap) {
+function openPsSwitchPlayerModal(courtId, forcePlainSwap, forcePartnerSwap) {
   const ps = state.paddleStack;
   if (!ps) return;
   const m = ps.courts.find(c => c.id === courtId);
@@ -7879,8 +7881,11 @@ function openPsSwitchPlayerModal(courtId, forcePlainSwap) {
   }
 
   const nextType = psNextMatchType(courtId);
-  const isPartnerSwap = !forcePlainSwap && (nextType === 'WW' || nextType === 'LL');
+  const isPartnerSwap = forcePartnerSwap || (!forcePlainSwap && (nextType === 'WW' || nextType === 'LL'));
   const tagIcon = t => t === 'W' ? '🏆' : t === 'L' ? '💀' : '🆕';
+
+  const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
+  const hasSwapInOptions = ps.queue.length > 0 || availableSubPlayers().some(p => !onCourtIds.has(p.id));
 
   const pA1 = getPlayer(m.teamA[0]), pA2 = getPlayer(m.teamA[1]);
   const pB1 = getPlayer(m.teamB[0]), pB2 = getPlayer(m.teamB[1]);
@@ -7889,7 +7894,9 @@ function openPsSwitchPlayerModal(courtId, forcePlainSwap) {
     // Partner swap: show all 4 cross-team pair options. Both players stay on court,
     // they just swap to opposite teams re-pairing with the other player.
     const title = '🔄 Switch Partner';
-    const subtitle = 'Next match is <b style="color:var(--win);">Winners vs Winners</b> or <b style="color:var(--loss);">Losers vs Losers</b>. Pick two players across teams to swap — both stay on court, just re-paired.';
+    const subtitle = (nextType === 'WW' || nextType === 'LL')
+      ? 'Next match is <b style="color:var(--win);">Winners vs Winners</b> or <b style="color:var(--loss);">Losers vs Losers</b>. Pick two players across teams to swap — both stay on court, just re-paired.'
+      : 'Pick two players across teams to swap — both stay on court, just re-paired with a new partner.';
 
     const swapOptions = [
       { labelA: esc(pA1?.name || '—'), labelB: esc(pB1?.name || '—'), swapIdx: '0-0' },
@@ -7914,26 +7921,27 @@ function openPsSwitchPlayerModal(courtId, forcePlainSwap) {
       <div class="eyebrow" style="margin:12px 2px 6px;">Pick the pair to swap</div>
       ${optHtml}
       <div class="modal-actions" style="margin-top:14px; flex-direction:column; gap:8px;">
-        ${ps.queue.length ? `<button class="btn btn-secondary btn-block" data-action="ps-switch-player-force" data-court="${courtId}">Someone wants to rest instead →</button>` : ''}
+        ${hasSwapInOptions ? `<button class="btn btn-secondary btn-block" data-action="ps-switch-player-force" data-court="${courtId}">Someone wants to rest instead →</button>` : ''}
         <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
       </div>
     `);
   } else {
     // Player swap: pick which on-court player to remove, then pick the replacement
-    // from the queue. Guard up-front for empty queue so the user never hits a dead end.
+    // from the queue or bench. Guard up-front so the user never hits a dead end.
     const title = '🔄 Switch Player';
-    if (!ps.queue.length) {
+    if (!hasSwapInOptions) {
       openModal(`
         <div class="modal-title">${title}</div>
-        <div class="modal-sub" style="line-height:1.6;">No players are waiting in the queue right now — nobody to swap in.</div>
-        <div class="modal-actions" style="margin-top:14px;">
+        <div class="modal-sub" style="line-height:1.6;">No one is waiting in the queue or available on the bench right now — nobody to swap in.</div>
+        <div class="modal-actions" style="margin-top:14px; flex-direction:column; gap:8px;">
+          <button class="btn btn-secondary btn-block" data-action="ps-switch-player-force-partner" data-court="${courtId}">🔄 Switch Partner instead →</button>
           <button class="btn btn-ghost btn-block" data-action="modal-close">Close</button>
         </div>
       `);
       return;
     }
 
-    const subtitle = 'Replace an on-court player with someone from the queue. The removed player returns to their queue spot.';
+    const subtitle = 'Replace an on-court player with someone from the queue or bench. The removed player returns to the queue.';
     const courtPlayers = [
       { id: m.teamA[0], team: 'A', slot: 0, name: pA1?.name || '—', tag: psTag(m, 'A', 0) },
       { id: m.teamA[1], team: 'A', slot: 1, name: pA2?.name || '—', tag: psTag(m, 'A', 1) },
@@ -7952,7 +7960,8 @@ function openPsSwitchPlayerModal(courtId, forcePlainSwap) {
       <div class="modal-sub" style="line-height:1.6;">${subtitle}</div>
       <div class="eyebrow" style="margin:12px 2px 6px;">Who's leaving the court?</div>
       ${courtHtml}
-      <div class="modal-actions" style="margin-top:14px;">
+      <div class="modal-actions" style="margin-top:14px; flex-direction:column; gap:8px;">
+        <button class="btn btn-secondary btn-block" data-action="ps-switch-player-force-partner" data-court="${courtId}">🔄 Switch Partner instead →</button>
         <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
       </div>
     `);
@@ -7971,8 +7980,11 @@ function openPsPickSwapInModal(courtId, team, slot) {
   const outTag = psTag(m, team, slot);
   const tagIcon = t => t === 'W' ? '🏆' : t === 'L' ? '💀' : '🆕';
 
-  if (!ps.queue.length) {
-    toast('No players in the queue to swap in.', 'warning');
+  const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
+  const subs = availableSubPlayers().filter(p => !onCourtIds.has(p.id));
+
+  if (!ps.queue.length && !subs.length) {
+    toast('No players in the queue or on the bench to swap in.', 'warning');
     return;
   }
 
@@ -7986,12 +7998,19 @@ function openPsPickSwapInModal(courtId, team, slot) {
       </button>`;
   }).join('');
 
+  const subHtml = subs.map(p => `
+    <button class="btn btn-secondary btn-block" style="margin-top:6px; justify-content:space-between;"
+      data-action="ps-do-switch-player-sub" data-court="${courtId}" data-team="${team}" data-slot="${slot}" data-sub="${p.id}">
+      <span>🔁 ${esc(p.name)}</span>
+      <span style="font-size:11px; color:var(--text-faint);">Sub Player</span>
+    </button>`).join('');
+
   openModal(`
     <div class="modal-title">Swap In a Player</div>
     <div class="modal-sub">Replacing <b style="color:var(--loss);">${esc(outPlayer?.name || '—')}</b> (${tagIcon(outTag)} Team ${team}). The swapped-out player returns to their queue position.</div>
-    <div class="eyebrow" style="margin:12px 2px 6px;">Pick from queue</div>
-    ${queueHtml}
+    ${queueHtml ? `<div class="eyebrow" style="margin:12px 2px 6px;">Pick from queue</div>${queueHtml}` : ''}
     ${ps.queue.length > 8 ? `<p class="helper-text" style="text-align:center;">Showing first 8 — see Queue tab for full list.</p>` : ''}
+    ${subHtml ? `<div class="eyebrow" style="margin:14px 2px 6px;">Sub Players on the bench</div>${subHtml}` : ''}
     <div class="modal-actions" style="margin-top:14px;">
       <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
     </div>
@@ -8083,6 +8102,61 @@ function psdoSwitchPlayer(courtId, team, slot, queueIdx) {
 
   saveAll(); renderAll(); closeModal();
   toast(`${playerName(inEntry.id)} steps in — ${playerName(outId)} returns to queue.`, 'success');
+}
+
+// Bring a bench Sub Player onto court in place of an existing player.
+// Unlike psdoSwitchPlayer, the incoming player isn't coming from ps.queue —
+// they come from the sub bench — so the outgoing player simply rejoins the
+// front of the queue instead of taking a specific slot.
+function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
+  const ps = state.paddleStack;
+  if (!ps) return;
+  const m = ps.courts.find(c => c.id === courtId);
+  if (!m) return;
+  if (m.winner || hasMatchStarted(m)) {
+    toast('Match already decided — cannot switch players.', 'warning');
+    return;
+  }
+  const sub = getPlayer(subId);
+  if (!sub || !sub.isSub || !sub.active) {
+    toast('That Sub Player is no longer available.', 'warning');
+    closeModal();
+    return;
+  }
+  const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
+  if (onCourtIds.has(subId)) {
+    toast(`${sub.name} is already on a court.`, 'warning');
+    closeModal();
+    return;
+  }
+
+  if (!Array.isArray(m.tagsA)) m.tagsA = ['N', 'N'];
+  if (!Array.isArray(m.tagsB)) m.tagsB = ['N', 'N'];
+
+  const outId = team === 'A' ? m.teamA[slot] : m.teamB[slot];
+  const outTag = psTag(m, team, slot);
+  if (outId === subId) {
+    toast('That player is already on court.', 'warning');
+    closeModal();
+    return;
+  }
+
+  psPushHistory();
+
+  // Place the sub on court, tagged as a fresh arrival
+  if (team === 'A') { m.teamA[slot] = subId; m.tagsA[slot] = 'N'; }
+  else              { m.teamB[slot] = subId; m.tagsB[slot] = 'N'; }
+
+  // Outgoing player rejoins the front of the queue with their wait clock reset to now
+  ps.queue.unshift({ id: outId, tag: outTag, sinceRound: state.round });
+
+  m.matchType = psMatchType(
+    [{ id: m.teamA[0], tag: m.tagsA[0] || 'N' }, { id: m.teamA[1], tag: m.tagsA[1] || 'N' }],
+    [{ id: m.teamB[0], tag: m.tagsB[0] || 'N' }, { id: m.teamB[1], tag: m.tagsB[1] || 'N' }]
+  );
+
+  saveAll(); renderAll(); closeModal();
+  toast(`${sub.name} subs in — ${playerName(outId)} returns to the queue.`, 'success');
 }
 
 // Execute the Switch Partner swap: two on-court players swap teams, both stay on court.
