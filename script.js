@@ -6130,6 +6130,7 @@ document.addEventListener('click', function(e){
     case 'ps-do-switch-player': psdoSwitchPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), parseInt(t.dataset.queueIdx, 10)); break;
     case 'ps-do-partner-swap': psdoPartnerSwap(t.dataset.court, t.dataset.swap); break;
     case 'ps-rest-player': psRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
+    case 'ps-do-rest-player': psDoRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
     case 'ps-add-court': {
       const ps = state.paddleStack;
       if (!ps) break;
@@ -7905,10 +7906,36 @@ function openPsPickSwapInModal(courtId, team, slot) {
 
 // Execute the Switch Player swap: queued player steps onto court, on-court player
 // goes back to the queue at the position the incoming player vacated.
-// One-tap "I'm resting" — swaps the given on-court player straight out with
-// whoever is next in the queue, no picking required. Falls back to opening
-// the full Switch Player modal if the queue is empty (nobody to bring in).
+// "I'm resting" — step 1: confirm before touching anything, since this is a
+// single tap right next to the score buttons and easy to hit by accident.
 function psRestPlayer(courtId, team, slot) {
+  const ps = state.paddleStack;
+  if (!ps) return;
+  const m = ps.courts.find(c => c.id === courtId);
+  if (!m) return;
+  if (m.winner || hasMatchStarted(m)) {
+    toast('Match already decided — cannot switch players.', 'warning');
+    return;
+  }
+  if (!ps.queue.length) {
+    toast('No players in the queue to swap in.', 'warning');
+    return;
+  }
+  const outId = team === 'A' ? m.teamA[slot] : m.teamB[slot];
+  const outName = getPlayer(outId)?.name || 'This player';
+  const inName = getPlayer(ps.queue[0].id)?.name || 'the next player in queue';
+  openModal(`
+    <div class="modal-title">${esc(outName)} Rests?</div>
+    <div class="modal-sub">${esc(inName)} steps in from the front of the queue. ${esc(outName)} goes back to the queue in their place.</div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn btn-ghost" data-action="modal-close">Cancel</button>
+      <button class="btn btn-secondary" data-action="ps-do-rest-player" data-court="${courtId}" data-team="${team}" data-slot="${slot}">Yes, Rest ${esc(outName)}</button>
+    </div>
+  `);
+}
+
+// Step 2: actually perform the swap after confirmation.
+function psDoRestPlayer(courtId, team, slot) {
   const ps = state.paddleStack;
   if (!ps) return;
   const m = ps.courts.find(c => c.id === courtId);
