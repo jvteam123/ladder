@@ -6169,8 +6169,36 @@ document.addEventListener('click', function(e){
       break;
     }
     case 'ps-undo-arrangement': psUndoLast(); break;
-    case 'ps-move-queue-up': psMoveQueueEntry(parseInt(t.dataset.idx, 10), -1); break;
-    case 'ps-move-queue-down': psMoveQueueEntry(parseInt(t.dataset.idx, 10), 1); break;
+    case 'ps-queue-move-menu': {
+      const ps = state.paddleStack;
+      if (!ps) break;
+      const idx = parseInt(t.dataset.idx, 10);
+      if (isNaN(idx) || idx < 0 || idx >= ps.queue.length) break;
+      const p = getPlayer(ps.queue[idx].id);
+      const atFront = idx === 0;
+      const atBack = idx === ps.queue.length - 1;
+      openModal(`
+        <div class="modal-title">Move ${esc(p?.name || 'Player')}</div>
+        <div class="modal-sub">Position ${idx + 1} of ${ps.queue.length} in the queue.</div>
+        <div class="modal-actions" style="margin-top:14px; flex-direction:column; gap:8px;">
+          <button class="btn btn-secondary btn-block" data-action="ps-move-queue-front" data-idx="${idx}" ${atFront ? 'disabled' : ''}>⏫ Move to Front</button>
+          <button class="btn btn-secondary btn-block" data-action="ps-move-queue-up" data-idx="${idx}" ${atFront ? 'disabled' : ''}>▲ Move Up One</button>
+          <button class="btn btn-secondary btn-block" data-action="ps-move-queue-down" data-idx="${idx}" ${atBack ? 'disabled' : ''}>▼ Move Down One</button>
+          <button class="btn btn-secondary btn-block" data-action="ps-move-queue-back" data-idx="${idx}" ${atBack ? 'disabled' : ''}>⏬ Move to Back</button>
+          <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
+        </div>
+      `);
+      break;
+    }
+    case 'ps-move-queue-up': psMoveQueueEntry(parseInt(t.dataset.idx, 10), -1); closeModal(); break;
+    case 'ps-move-queue-down': psMoveQueueEntry(parseInt(t.dataset.idx, 10), 1); closeModal(); break;
+    case 'ps-move-queue-front': psMoveQueueEntryTo(parseInt(t.dataset.idx, 10), 0); closeModal(); break;
+    case 'ps-move-queue-back': {
+      const ps = state.paddleStack;
+      if (ps) psMoveQueueEntryTo(parseInt(t.dataset.idx, 10), ps.queue.length - 1);
+      closeModal();
+      break;
+    }
     case 'ps-add-guest':
       goToAddPlayer('Add your walk-in — they\'ll go straight into the Paddle Stack queue.');
       break;
@@ -7484,6 +7512,19 @@ function psMoveQueueEntry(idx, dir) {
   saveAll(); renderAll();
 }
 
+// Move a queue entry to an arbitrary index (used by "Move to Front"/"Move to Back")
+function psMoveQueueEntryTo(idx, newIdx) {
+  const ps = state.paddleStack;
+  if (!ps || isNaN(idx) || isNaN(newIdx)) return;
+  if (idx < 0 || idx >= ps.queue.length) return;
+  newIdx = Math.max(0, Math.min(newIdx, ps.queue.length - 1));
+  if (newIdx === idx) return;
+  psPushHistory();
+  const [entry] = ps.queue.splice(idx, 1);
+  ps.queue.splice(newIdx, 0, entry);
+  saveAll(); renderAll();
+}
+
 // Build the end-of-session summary block (games played, W/L) shown in the
 // "End Session?" confirmation, scoped to matches recorded during this PS
 // session only (via ps.sessionMatchIds).
@@ -7593,17 +7634,19 @@ function renderPaddleStackQueueView(el) {
       const roundsWaited = typeof entry.sinceRound === 'number' ? Math.max(0, state.round - entry.sinceRound) : 0;
       const cyclesAhead = Math.floor(i / 4 / Math.max(1, ps.numCourts));
       const waitEstimate = (!isNextFour && avgDurMs) ? fmtWait(cyclesAhead * avgDurMs) : null;
-      html += `<div class="queue-row" style="${isNextFour ? 'background:rgba(215,242,61,0.06);' : ''}">
+      const metaBits = [
+        `<span style="color:${tagColor(entry.tag)};">${tagLabel(entry.tag)}</span>`,
+        roundsWaited >= 2 ? `<span style="color:var(--loss); font-weight:700;">⏱ waited ${roundsWaited}</span>` : '',
+        waitEstimate ? `<span style="color:var(--text-faint);">${waitEstimate}</span>` : '',
+        (isNextFour && i === 0) ? `<span style="font-weight:800; color:var(--ball);">NEXT UP →</span>` : ''
+      ].filter(Boolean).join('<span style="color:var(--text-faint);"> · </span>');
+      html += `<div class="queue-row" style="align-items:center; ${isNextFour ? 'background:rgba(215,242,61,0.06);' : ''}">
         <span class="qrank" style="${isNextFour ? 'background:var(--ball); color:#10150a;' : ''}">${i + 1}</span>
-        <span style="font-size:13px; font-weight:${isNextFour ? '700' : '400'}; flex:1;">${esc(p?.name || '—')}</span>
-        <span style="font-size:11px; color:${tagColor(entry.tag)};">${tagLabel(entry.tag)}</span>
-        ${roundsWaited >= 2 ? `<span style="font-size:10px; color:var(--loss); font-weight:700;" title="Rounds waited">⏱ ${roundsWaited}</span>` : ''}
-        ${waitEstimate ? `<span style="font-size:10px; color:var(--text-faint);">${waitEstimate}</span>` : ''}
-        ${isNextFour && i === 0 ? `<span style="font-size:10px; font-weight:800; color:var(--ball);">NEXT UP →</span>` : ''}
-        <span style="display:flex; flex-direction:column; gap:1px; margin-left:4px;">
-          <button class="btn btn-ghost btn-sm" style="padding:0 6px; line-height:1.1; ${i === 0 ? 'visibility:hidden;' : ''}" data-action="ps-move-queue-up" data-idx="${i}" title="Move up">▲</button>
-          <button class="btn btn-ghost btn-sm" style="padding:0 6px; line-height:1.1; ${i === ps.queue.length - 1 ? 'visibility:hidden;' : ''}" data-action="ps-move-queue-down" data-idx="${i}" title="Move down">▼</button>
+        <span style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:${isNextFour ? '700' : '400'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(p?.name || '—')}</div>
+          <div style="font-size:10.5px; margin-top:2px;">${metaBits}</div>
         </span>
+        <button class="btn btn-ghost btn-sm" style="padding:6px 10px; flex:none;" data-action="ps-queue-move-menu" data-idx="${i}" title="Move in queue">⇅</button>
       </div>`;
     });
     html += `</div>`;
