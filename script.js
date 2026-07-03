@@ -7333,7 +7333,7 @@ function renderPaddleStackView(el) {
       const p = getPlayer(playerId);
       const justify = team === 'A' ? 'flex-end' : 'flex-start';
       const restBtn = canSwap
-        ? `<button type="button" class="btn btn-ghost btn-sm" style="padding:0 4px; font-size:10px; line-height:1;" data-action="ps-rest-player" data-court="${m.id}" data-team="${team}" data-slot="${slot}" title="${esc(p?.name || 'Player')} rests — next in queue steps in">😴</button>`
+        ? `<button type="button" class="btn btn-ghost btn-sm" style="padding:2px 8px; font-size:10px; line-height:1.4; min-height:0; height:auto;" data-action="ps-rest-player" data-court="${m.id}" data-team="${team}" data-slot="${slot}" title="${esc(p?.name || 'Player')} rests — next in queue steps in">Rest</button>`
         : '';
       return `<span style="display:inline-flex; align-items:center; justify-content:${justify}; gap:4px; max-width:100%;">${esc(p?.name || '—')}${restBtn}</span>`;
     }
