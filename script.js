@@ -6203,7 +6203,23 @@ document.addEventListener('click', function(e){
       toast(`Court removed — ${ps.numCourts} court${ps.numCourts !== 1 ? 's' : ''} now.`, 'success');
       break;
     }
-    case 'ps-undo-arrangement': psUndoLast(); break;
+    case 'ps-undo-arrangement-confirm': {
+      const ps = state.paddleStack;
+      if (!ps || !Array.isArray(ps.actionHistory) || !ps.actionHistory.length) {
+        toast('Nothing to undo.', 'warning');
+        break;
+      }
+      openModal(`
+        <div class="modal-title">Undo Last Arrangement?</div>
+        <div class="modal-sub">Reverts the queue and courts to how they were before your last swap, skip, or court change. Match results already recorded are not affected.</div>
+        <div class="modal-actions" style="margin-top:16px;">
+          <button class="btn btn-ghost" data-action="modal-close">Cancel</button>
+          <button class="btn btn-secondary" data-action="ps-undo-arrangement">Yes, Undo</button>
+        </div>
+      `);
+      break;
+    }
+    case 'ps-undo-arrangement': psUndoLast(); closeModal(); break;
     case 'ps-queue-move-menu': {
       const ps = state.paddleStack;
       if (!ps) break;
@@ -7520,7 +7536,7 @@ function renderPaddleStackView(el) {
         <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="ps-remove-court-confirm" ${ps.numCourts <= 1 ? 'disabled' : ''}>➖ Remove Court</button>
       </div>
       <div style="display:flex; gap:8px; margin-top:8px;">
-        <button class="btn btn-ghost btn-sm" style="flex:1;" data-action="ps-undo-arrangement" ${(!Array.isArray(ps.actionHistory) || !ps.actionHistory.length) ? 'disabled' : ''}>↩ Undo Arrangement${(Array.isArray(ps.actionHistory) && ps.actionHistory.length) ? ` (${ps.actionHistory.length})` : ''}</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1;" data-action="ps-undo-arrangement-confirm" ${(!Array.isArray(ps.actionHistory) || !ps.actionHistory.length) ? 'disabled' : ''}>↩ Undo Arrangement${(Array.isArray(ps.actionHistory) && ps.actionHistory.length) ? ` (${ps.actionHistory.length})` : ''}</button>
         <button class="btn btn-danger btn-sm" style="flex:1;" data-action="ps-end-session">⏹️ End Session</button>
       </div>
     </div>
