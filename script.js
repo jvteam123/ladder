@@ -6131,6 +6131,21 @@ document.addEventListener('click', function(e){
     case 'ps-do-partner-swap': psdoPartnerSwap(t.dataset.court, t.dataset.swap); break;
     case 'ps-rest-player': psRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
     case 'ps-do-rest-player': psDoRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
+    case 'ps-add-court-confirm': {
+      const ps = state.paddleStack;
+      if (!ps) break;
+      const cur = clamp(ps.numCourts, 1, 10);
+      if (cur >= 10) { toast('Maximum 10 courts.', 'warning'); break; }
+      openModal(`
+        <div class="modal-title">Add Court ${cur + 1}?</div>
+        <div class="modal-sub">If enough players are queued, a new match starts on it right away.</div>
+        <div class="modal-actions" style="margin-top:16px;">
+          <button class="btn btn-ghost" data-action="modal-close">Cancel</button>
+          <button class="btn btn-primary" data-action="ps-add-court">Yes, Add Court</button>
+        </div>
+      `);
+      break;
+    }
     case 'ps-add-court': {
       const ps = state.paddleStack;
       if (!ps) break;
@@ -6139,8 +6154,28 @@ document.addEventListener('click', function(e){
       ps.numCourts = cur + 1;
       state.settings.numCourts = ps.numCourts;
       psFillCourts();
-      saveAll(); renderAll();
+      saveAll(); closeModal(); renderAll();
       toast(`Court ${ps.numCourts} added.`, 'success');
+      break;
+    }
+    case 'ps-remove-court-confirm': {
+      const ps = state.paddleStack;
+      if (!ps) break;
+      const cur = clamp(ps.numCourts, 1, 10);
+      if (cur <= 1) { toast('At least 1 court required.', 'warning'); break; }
+      const lastCourt = ps.courts.find(c => c.courtNum === cur);
+      if (lastCourt && hasMatchStarted(lastCourt)) {
+        toast('Finish or skip the match on the last court before removing it.', 'warning');
+        break;
+      }
+      openModal(`
+        <div class="modal-title">Remove Court ${cur}?</div>
+        <div class="modal-sub">${lastCourt ? 'Its players return to the front of the queue with their same tags. No result is recorded.' : 'This closes down to ' + (cur - 1) + ' court' + (cur - 1 !== 1 ? 's' : '') + '.'}</div>
+        <div class="modal-actions" style="margin-top:16px;">
+          <button class="btn btn-ghost" data-action="modal-close">Cancel</button>
+          <button class="btn btn-danger" data-action="ps-remove-court">Yes, Remove Court</button>
+        </div>
+      `);
       break;
     }
     case 'ps-remove-court': {
@@ -6164,7 +6199,7 @@ document.addEventListener('click', function(e){
       }
       ps.numCourts = cur - 1;
       state.settings.numCourts = ps.numCourts;
-      saveAll(); renderAll();
+      saveAll(); closeModal(); renderAll();
       toast(`Court removed — ${ps.numCourts} court${ps.numCourts !== 1 ? 's' : ''} now.`, 'success');
       break;
     }
@@ -7481,8 +7516,8 @@ function renderPaddleStackView(el) {
   html += `
     <div class="card" style="margin-top:14px;">
       <div style="display:flex; gap:8px;">
-        <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="ps-add-court">➕ Add Court</button>
-        <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="ps-remove-court" ${ps.numCourts <= 1 ? 'disabled' : ''}>➖ Remove Court</button>
+        <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="ps-add-court-confirm">➕ Add Court</button>
+        <button class="btn btn-secondary btn-sm" style="flex:1;" data-action="ps-remove-court-confirm" ${ps.numCourts <= 1 ? 'disabled' : ''}>➖ Remove Court</button>
       </div>
       <div style="display:flex; gap:8px; margin-top:8px;">
         <button class="btn btn-ghost btn-sm" style="flex:1;" data-action="ps-undo-arrangement" ${(!Array.isArray(ps.actionHistory) || !ps.actionHistory.length) ? 'disabled' : ''}>↩ Undo Arrangement${(Array.isArray(ps.actionHistory) && ps.actionHistory.length) ? ` (${ps.actionHistory.length})` : ''}</button>
