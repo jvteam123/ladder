@@ -8022,7 +8022,7 @@ function openPaddleStackSetupModal() {
     <div class="eyebrow" style="margin:14px 2px 8px;">Starting Order</div>
     <div style="display:flex; gap:8px; margin-bottom:4px;">
       <button type="button" class="btn ${currentRandomize ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-toggle-randomize" data-value="true">🔀 Random</button>
-      <button type="button" class="btn ${!currentRandomize ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-toggle-randomize" data-value="false">📋 Roster Order</button>
+      <button type="button" class="btn ${!currentRandomize ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-toggle-randomize" data-value="false">📋 Player List Order</button>
     </div>
     <p class="helper-text" style="margin:2px 2px 8px;">${currentRandomize ? 'First matches are shuffled — not based on who checked in first.' : 'First matches follow roster/check-in order.'}</p>
 
@@ -8040,6 +8040,17 @@ function openPaddleStackSetupModal() {
       </div>
     </div>
 
+    <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
+    <div class="card" style="margin:0 0 4px;">
+      <p class="helper-text" style="margin-top:0;">Lock two players together so they always start and stay on the same team. Honored in Paddle Stack Queue.</p>
+      ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
+          <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
+          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}" data-return="paddlestack">Remove</button>
+        </div>
+      `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
+      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo" data-return="paddlestack">+ Add Fixed Duo</button>
+    </div>
 
     <div class="eyebrow" style="margin:14px 2px 8px;">How many courts?</div>
     <div class="session-opt-list" id="psCourtsListPs">
@@ -8065,18 +8076,6 @@ function openPaddleStackSetupModal() {
         <input type="number" id="psWinScoreInput" min="1" max="99" value="${currentScore}" style="font-size:18px; font-weight:700; text-align:center;">
         <p class="helper-text" style="margin:6px 2px 0;">First team to reach this score (win by 2) wins the match.</p>
       </div>
-    </div>
-
-    <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
-    <div class="card" style="margin:0 0 4px;">
-      <p class="helper-text" style="margin-top:0;">Lock two players together so they always start and stay on the same team. Honored in Paddle Stack Queue.</p>
-      ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
-          <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
-          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}" data-return="paddlestack">Remove</button>
-        </div>
-      `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
-      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo" data-return="paddlestack">+ Add Fixed Duo</button>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
