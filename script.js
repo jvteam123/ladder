@@ -6094,10 +6094,6 @@ document.addEventListener('click', function(e){
       state.settings.psRandomizeStart = (t.dataset.value === 'true');
       openPaddleStackSetupModal();
       break;
-    case 'ps-pick-blocksize':
-      state.settings.psBlockSize = clamp(parseInt(t.dataset.size, 10) || 4, 2, 8);
-      openPaddleStackSetupModal();
-      break;
     case 'ps-confirm-start': psConfirmStart(); break;
     case 'ps-set-winner': confirmSelectWinner(liveMatchCtxPS(t.dataset.court), t.dataset.team); break;
     case 'ps-score-adjust': adjustMatchScore(liveMatchCtxPS(t.dataset.court), t.dataset.team, parseInt(t.dataset.delta,10)); break;
@@ -8014,8 +8010,9 @@ function openPaddleStackSetupModal() {
   }).join('');
 
   const currentRandomize = state.settings.psRandomizeStart !== false;
-  const currentBlockSize = clamp(parseInt(state.settings.psBlockSize, 10) || 4, 2, 8);
-  const blockSizeOptions = [2, 4, 6, 8];
+  // Block Size is no longer configurable from the setup screen — always use
+  // the classic paddle-stack default of 4 winners/losers per block.
+  state.settings.psBlockSize = 4;
   const currentGenderPairing = state.settings.psMixedGenderPairing !== false;
 
   openModal(`
@@ -8043,11 +8040,6 @@ function openPaddleStackSetupModal() {
       </div>
     </div>
 
-    <div class="eyebrow" style="margin:14px 2px 8px;">Block Size</div>
-    <div style="display:flex; gap:8px; margin-bottom:4px;">
-      ${blockSizeOptions.map(n => `<button type="button" class="btn ${n === currentBlockSize ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-pick-blocksize" data-size="${n}">${n}</button>`).join('')}
-    </div>
-    <p class="helper-text" style="margin:2px 2px 8px;">How many winners/losers accumulate before that block rejoins the queue. 4 matches the classic paddle-stack pattern; smaller sizes cycle faster with fewer players.</p>
 
     <div class="eyebrow" style="margin:14px 2px 8px;">How many courts?</div>
     <div class="session-opt-list" id="psCourtsListPs">
