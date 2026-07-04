@@ -6293,13 +6293,21 @@ document.addEventListener('click', function(e){
       if (!m) break;
       const id = team === 'A' ? m.teamA[i] : m.teamB[i];
       const p = getPlayer(id);
+      const canSwap = !m.winner && !hasMatchStarted(m) && ps.queue.length > 0;
+      const swapHint = m.winner || hasMatchStarted(m)
+        ? 'Scoring already started on this court — can\'t swap once a match is underway.'
+        : (!ps.queue.length ? 'No one is waiting in the queue to swap in.' : '');
       openModal(`
         <div class="modal-title">${esc(p?.name || 'Player')} — Court ${m.courtNum}</div>
-        <div class="modal-sub">Currently on court. Change their status tag so the next Winners/Losers block they join stays consistent.</div>
+        <div class="modal-sub">Currently on court. Change their status tag so the next Winners/Losers block they join stays consistent, or swap them out for someone waiting in the queue.</div>
         <div class="modal-actions" style="margin-top:14px; gap:8px;">
           <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="N">🆕 New</button>
           <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="W">🏆 Winner</button>
           <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="L">💀 Loser</button>
+        </div>
+        <div class="modal-actions" style="margin-top:12px; flex-direction:column; gap:8px;">
+          <button class="btn btn-secondary btn-block" data-action="ps-pick-swap-out" data-court="${courtId}" data-team="${team}" data-slot="${i}" ${canSwap ? '' : 'disabled'}>🔄 Swap with Queue Player →</button>
+          ${swapHint ? `<p class="helper-text" style="text-align:center; margin:0;">${swapHint}</p>` : ''}
         </div>
         <div class="modal-actions" style="margin-top:10px;">
           <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
@@ -8143,6 +8151,10 @@ function openPsPickSwapInModal(courtId, team, slot) {
   if (!ps) return;
   const m = ps.courts.find(c => c.id === courtId);
   if (!m) return;
+  if (m.winner || hasMatchStarted(m)) {
+    toast('Scoring already started on this court — can\'t swap once a match is underway.', 'warning');
+    return;
+  }
 
   const outId = team === 'A' ? m.teamA[slot] : m.teamB[slot];
   const outPlayer = getPlayer(outId);
