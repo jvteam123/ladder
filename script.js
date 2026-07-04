@@ -765,6 +765,25 @@ function bumpPair(map, id){ map[id] = (map[id]||0)+1; }
 /* ============================================================
    FIXED DUO MANAGEMENT
    ============================================================ */
+// Remembers which setup screen (Smart Auto-Match or Paddle Stack) the
+// "+ Add Fixed Duo" / "Remove" action was triggered from, set right before
+// opening the Add Fixed Duo modal or calling removeFixedDuo(). Letting
+// addFixedDuo/removeFixedDuo reopen that same setup screen afterward means
+// creating or removing a duo mid-setup no longer kicks you out of the flow —
+// you land back on the setup screen and can keep configuring, then hit
+// Start when ready.
+let _duoSetupReturnCtx = null;
+function _returnToDuoSetupContext(){
+  const ctx = _duoSetupReturnCtx;
+  _duoSetupReturnCtx = null;
+  if(ctx === 'cso'){
+    openCSOPSetupModal(csoActivePlayers().length);
+  } else if(ctx === 'paddlestack'){
+    openPaddleStackSetupModal();
+  } else {
+    closeModal();
+  }
+}
 function addFixedDuo(id1, id2){
   if(!state.fixedDuos) state.fixedDuos = [];
   // Check if either player is already in a duo
@@ -775,13 +794,13 @@ function addFixedDuo(id1, id2){
   }
   if(id1 === id2){ toast('Select two different players.', 'warning'); return; }
   state.fixedDuos.push([id1, id2]);
-  saveAll(); renderAll(); closeModal();
+  saveAll(); renderAll(); _returnToDuoSetupContext();
   toast(`Fixed duo created: ${playerName(id1)} & ${playerName(id2)}.`, 'success');
 }
 
 function removeFixedDuo(id1, id2){
   state.fixedDuos = (state.fixedDuos || []).filter(d => !(d.includes(id1) && d.includes(id2)));
-  saveAll(); renderAll(); closeModal();
+  saveAll(); renderAll(); _returnToDuoSetupContext();
   toast('Fixed duo removed.', 'success');
 }
 
@@ -1962,10 +1981,10 @@ function openCSOPSetupModal(activeCount) {
       ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
           <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
-          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}">Remove</button>
+          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}" data-return="cso">Remove</button>
         </div>
       `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
-      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo">+ Add Fixed Duo</button>
+      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo" data-return="cso">+ Add Fixed Duo</button>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
@@ -6750,6 +6769,7 @@ document.addEventListener('click', function(e){
     }
     case 'save-settings': saveSettingsFromForm(); break;
     case 'open-add-fixed-duo': {
+      _duoSetupReturnCtx = t.dataset.return || null;
       const activePl = activePlayers();
       if(activePl.length < 2){ toast('Need at least 2 active players to create a duo.', 'warning'); break; }
       // Filter out players already in a duo
@@ -6786,6 +6806,7 @@ document.addEventListener('click', function(e){
       break;
     }
     case 'remove-fixed-duo':
+      _duoSetupReturnCtx = t.dataset.return || null;
       removeFixedDuo(t.dataset.p1, t.dataset.p2);
       break;
 
@@ -8060,10 +8081,10 @@ function openPaddleStackSetupModal() {
       ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
           <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
-          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}">Remove</button>
+          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}" data-return="paddlestack">Remove</button>
         </div>
       `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
-      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo">+ Add Fixed Duo</button>
+      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo" data-return="paddlestack">+ Add Fixed Duo</button>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
