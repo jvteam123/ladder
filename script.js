@@ -1958,7 +1958,7 @@ function openCSOPSetupModal(activeCount) {
 
     <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
     <div class="card" style="margin:0 0 4px;">
-      <p class="helper-text" style="margin-top:0;">Lock two players together so they always play on the same team when both are active. Only honored in Smart Auto-Match.</p>
+      <p class="helper-text" style="margin-top:0;">Lock two players together so they always play on the same team when both are active. Honored in Smart Auto-Match and Paddle Stack Queue.</p>
       ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
         <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
           <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
@@ -2966,15 +2966,10 @@ function openSessionConfirmModal(opt, totalMatches, gpp, playerCount){
       </div>
     </div>
 
-    <div class="eyebrow" style="margin:0 2px 6px;">Balancing &amp; Fairness</div>
-    <div class="card" style="margin:0 0 ${state.settings.matchMode === 'RoundRobin' ? '10px' : '0'};">
-      ${toggleRow('sessionWinnerVsWinnerToggle', 'Winner vs Winner / Loser vs Loser', "Next generation pairs last generation's winners together and losers together.", !!state.settings.winnerVsWinner)}
-    </div>
-
     ${state.settings.matchMode === 'RoundRobin' ? `
     <div class="eyebrow" style="margin:0 2px 6px;">Schedule Generation</div>
     <div class="card" style="margin:0;">
-      ${toggleRow('sessionFullScheduleToggle', 'Generate Full Schedule Now', `Builds every round for all ${totalMatches} matches right away and lists the whole session, instead of one round at a time as you play. Winner vs Winner has no effect on rounds beyond the first, since results for those rounds don't exist yet.`, !!state.settings.generateFullSchedule)}
+      ${toggleRow('sessionFullScheduleToggle', 'Generate Full Schedule Now', `Builds every round for all ${totalMatches} matches right away and lists the whole session, instead of one round at a time as you play.`, !!state.settings.generateFullSchedule)}
     </div>
     ` : ''}
 
@@ -2992,11 +2987,10 @@ function confirmSessionPlanAndGenerate(planId, totalMatches, gpp){
   const hadGenerationInProgress = !!state.currentGeneration;
 
   // Pull the editable values straight out of the confirm form so courts,
-  // winning score, and the balancing toggles all apply before the first
-  // generation is built — not just shown read-only.
+  // winning score, and the schedule-generation toggle all apply before the
+  // first generation is built — not just shown read-only.
   const courtsEl = document.getElementById('sessionNumCourtsInput');
   const scoreEl = document.getElementById('sessionWinningScoreInput');
-  const wvwEl = document.getElementById('sessionWinnerVsWinnerToggle');
   const fullScheduleEl = document.getElementById('sessionFullScheduleToggle');
 
   if(courtsEl){
@@ -3007,7 +3001,6 @@ function confirmSessionPlanAndGenerate(planId, totalMatches, gpp){
     const v = parseInt(scoreEl.value, 10);
     state.settings.winningScore = (isNaN(v) || v < 1) ? 11 : v;
   }
-  if(wvwEl) state.settings.winnerVsWinner = wvwEl.checked;
   if(fullScheduleEl) state.settings.generateFullSchedule = fullScheduleEl.checked;
 
   state.settings.sessionPlan = {
@@ -3134,50 +3127,10 @@ function buildOneGeneration(activeList, genId, opts) {
     return a._jitter - b._jitter;
   });
 
-  let matchups = [];
-  let wvwApplied = false; // tracks whether winner/loser bucketing actually ran this build (not just whether the setting is on)
-
-  // Winner-vs-winner / Loser-vs-loser bucketing, based on the generation that just finished.
-  // Keyed off genId-1 (the generation immediately before this one) rather than
-  // state.round directly, so this same logic works whether genId is being
-  // built live (where state.round === genId-1 once the prior round is done)
-  // or inside the full-schedule dry-run loop (where future rounds simply
-  // won't find any real results yet and gracefully fall back to fairness-only).
-  if(state.settings.winnerVsWinner && genId > 1){
-    const lastGenMatches = state.matches.filter(m => m.generation === genId - 1);
-    if(lastGenMatches.length){
-      wvwApplied = true;
-      const lastWinners = new Set(), lastLosers = new Set();
-      lastGenMatches.forEach(m => {
-        m.winners.forEach(id => lastWinners.add(id));
-        m.losers.forEach(id => lastLosers.add(id));
-      });
-
-      // playingPlayers is already fairness-sorted; preserve that order within each bucket.
-      const winnersGroup = playingPlayers.filter(p => lastWinners.has(p.id));
-      const losersGroup  = playingPlayers.filter(p => lastLosers.has(p.id));
-      const freshGroup   = playingPlayers.filter(p => !lastWinners.has(p.id) && !lastLosers.has(p.id)); // subbed in / previously sitting
-
-      // Round each bucket up to a clean foursome multiple using the fairness-sorted "fresh" pool
-      // (newcomers / former sit-outs) before resorting to splitting buckets apart.
-      topUpToMultipleOf4(winnersGroup, freshGroup);
-      topUpToMultipleOf4(losersGroup, freshGroup);
-
-      matchups = matchups.concat(buildBalancedMatchups(winnersGroup));
-      matchups = matchups.concat(buildBalancedMatchups(losersGroup));
-      matchups = matchups.concat(buildBalancedMatchups(freshGroup));
-
-      // Anyone left over (a bucket had an unresolvable remainder) gets matched directly.
-      const consumed = new Set();
-      matchups.forEach(m => { m.teamA.forEach(id=>consumed.add(id)); m.teamB.forEach(id=>consumed.add(id)); });
-      const leftover = playingPlayers.filter(p => !consumed.has(p.id));
-      matchups = matchups.concat(buildBalancedMatchups(leftover));
-    }
-  }
-
-  if(!matchups.length){
-    matchups = buildBalancedMatchups(playingPlayers);
-  }
+  // Round Robin always matches players fairly across the whole playing pool —
+  // no Winner-vs-Winner / Loser-vs-Loser bucketing here, since Round Robin's
+  // job is to rotate everyone against everyone, not silo winners from losers.
+  let matchups = buildBalancedMatchups(playingPlayers);
 
   const numCourts = clamp(parseInt(state.settings.numCourts,10)||1, 1, 10);
   const matches = matchups.map((m, idx) => ({
@@ -3213,8 +3166,7 @@ function buildOneGeneration(activeList, genId, opts) {
   return {
     generation: genId,
     matches: matches,
-    sittingOut: sittingPlayers.map(p => p.id),
-    wvwApplied: wvwApplied // true only if winner/loser bucketing actually ran for this generation
+    sittingOut: sittingPlayers.map(p => p.id)
   };
 }
 
@@ -5280,13 +5232,6 @@ function renderMatchView(el){
       `;
     }
 
-    // Winner vs Winner / Loser vs Loser only ever actually takes effect from
-    // Generation 2 onward — it buckets players by how they did in the
-    // generation that just finished, so Generation 1 never has a "last
-    // generation" to bucket from. gen.wvwApplied is set precisely when the
-    // bucketing logic actually ran for this generation (not just whether the
-    // setting happens to be on right now), so the hint stays accurate even
-    // if the toggle was changed after this generation was built.
     const wvwHintHtml = '';
 
     let html = `
@@ -5958,17 +5903,6 @@ function renderSettingsView(el){
 
       <div class="toggle-row">
         <div>
-          <div class="t-label">Winner vs Winner / Loser vs Loser</div>
-          <div class="t-hint">Next generation pairs last generation's winners together and losers together, while still balancing games played.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="winnerVsWinnerToggle" ${state.settings.winnerVsWinner ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
-
-      <div class="toggle-row">
-        <div>
           <div class="t-label">🔊 Audio Scoring</div>
           <div class="t-hint">Play sound cues for +/- points, side-outs, and game wins.</div>
         </div>
@@ -6025,14 +5959,12 @@ function renderSettingsView(el){
 
 function saveSettingsFromForm(){
   const numCourtsVal = document.getElementById('numCourtsInput') ? parseInt(document.getElementById('numCourtsInput').value, 10) || 1 : 1;
-  const winnerVsWinnerVal = document.getElementById('winnerVsWinnerToggle') ? document.getElementById('winnerVsWinnerToggle').checked : true;
   const audioScoringVal = document.getElementById('audioScoringToggle') ? document.getElementById('audioScoringToggle').checked : true;
   const voiceAnnounceVal = document.getElementById('voiceAnnounceToggle') ? document.getElementById('voiceAnnounceToggle').checked : true;
   const winningScoreRaw = document.getElementById('winningScoreInput') ? parseInt(document.getElementById('winningScoreInput').value, 10) : 11;
   const raceToTwoVal = document.getElementById('raceToTwoToggle') ? document.getElementById('raceToTwoToggle').checked : false;
 
   state.settings.numCourts = numCourtsVal;
-  state.settings.winnerVsWinner = winnerVsWinnerVal;
   state.settings.audioScoring = audioScoringVal;
   state.settings.voiceAnnounce = voiceAnnounceVal;
   state.settings.winningScore = (isNaN(winningScoreRaw) || winningScoreRaw < 1) ? 11 : winningScoreRaw;
@@ -6826,7 +6758,7 @@ document.addEventListener('click', function(e){
       if(eligible.length < 2){ toast('All active players are already in fixed duos.', 'warning'); break; }
       openModal(`
         <div class="modal-title">Add Fixed Duo 🔗</div>
-        <div class="modal-sub">Select two players who should always be on the same team. <b style="color:var(--ball);">Only honored in Smart Auto-Match</b> — Round Robin and Paddle Stack Queue don't check duos.</div>
+        <div class="modal-sub">Select two players who should always be on the same team. <b style="color:var(--ball);">Honored in Smart Auto-Match and Paddle Stack Queue</b> — Round Robin doesn't check duos.</div>
         <div class="field" style="margin-top:10px;">
           <label>Player 1</label>
           <select id="duoP1">
@@ -8120,6 +8052,18 @@ function openPaddleStackSetupModal() {
         <input type="number" id="psWinScoreInput" min="1" max="99" value="${currentScore}" style="font-size:18px; font-weight:700; text-align:center;">
         <p class="helper-text" style="margin:6px 2px 0;">First team to reach this score (win by 2) wins the match.</p>
       </div>
+    </div>
+
+    <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
+    <div class="card" style="margin:0 0 4px;">
+      <p class="helper-text" style="margin-top:0;">Lock two players together so they always start and stay on the same team. Honored in Paddle Stack Queue.</p>
+      ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
+          <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
+          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}">Remove</button>
+        </div>
+      `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
+      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo">+ Add Fixed Duo</button>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
