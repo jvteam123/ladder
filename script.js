@@ -617,8 +617,32 @@ function speakSideOut(m){
 // because it contained "no ", while "Nothing to undo." did not) and could
 // misfire on any future wording change.
 function toast(msg, type){
-  const root = document.getElementById('toast-root');
-  if(!root) return;
+  let root = document.getElementById('toast-root');
+  if(!root){
+    root = document.createElement('div');
+    root.id = 'toast-root';
+    document.body.appendChild(root);
+  }
+  // Force top-corner placement and single-column stacking every call —
+  // inline styles win regardless of whatever positioning the page's own
+  // CSS gives #toast-root, so this holds even if that stylesheet changes.
+  root.style.position = 'fixed';
+  root.style.top = '16px';
+  root.style.right = '16px';
+  root.style.left = 'auto';
+  root.style.bottom = 'auto';
+  root.style.display = 'flex';
+  root.style.flexDirection = 'column';
+  root.style.alignItems = 'flex-end';
+  root.style.zIndex = '9999';
+
+  // Only one toast on screen at a time — clear out anything still showing
+  // (and cancel its pending auto-dismiss) before adding the new one.
+  Array.from(root.querySelectorAll('.toast')).forEach(t => {
+    if(t._dismissTimer) clearTimeout(t._dismissTimer);
+    t.remove();
+  });
+
   const el = document.createElement('div');
   el.className = 'toast' + (type ? ' toast-' + type : '');
 
@@ -642,12 +666,9 @@ function toast(msg, type){
   el.innerHTML = `<span style="color:${iconColor};flex:none;display:flex;align-items:center;">${icon}</span><span style="flex:1;line-height:1.4;">${msg}</span>`;
 
   root.appendChild(el);
-  // Limit toast stack to 4
-  const toasts = root.querySelectorAll('.toast');
-  if(toasts.length > 4) toasts[0].remove();
 
   const DURATION = 2800;
-  setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateX(12px)'; el.style.transition='opacity .2s ease,transform .2s ease'; setTimeout(()=>el.remove(), 220); }, DURATION);
+  el._dismissTimer = setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateX(12px)'; el.style.transition='opacity .2s ease,transform .2s ease'; setTimeout(()=>el.remove(), 220); }, DURATION);
 }
 
 function closeModal(){
@@ -6153,6 +6174,7 @@ document.addEventListener('click', function(e){
     case 'ps-do-switch-player': psdoSwitchPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), parseInt(t.dataset.queueIdx, 10)); break;
     case 'ps-do-switch-player-sub': psdoSwitchPlayerFromSub(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), t.dataset.sub); break;
     case 'ps-do-switch-player-court': psdoSwitchPlayerFromCourt(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), t.dataset.fromCourt, t.dataset.fromTeam, parseInt(t.dataset.fromSlot, 10)); break;
+    case 'ps-do-switch-player-block': psdoSwitchPlayerFromBlock(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10), t.dataset.block, parseInt(t.dataset.blockIdx, 10)); break;
     case 'ps-do-partner-swap': psdoPartnerSwap(t.dataset.court, t.dataset.swap); break;
     case 'ps-rest-player': psRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
     case 'ps-do-rest-player': psDoRestPlayer(t.dataset.court, t.dataset.team, parseInt(t.dataset.slot, 10)); break;
@@ -6297,7 +6319,8 @@ document.addEventListener('click', function(e){
       const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
       const hasAnyoneToSwapIn = ps.queue.length > 0
         || availableSubPlayers().some(sp => !onCourtIds.has(sp.id))
-        || psOtherCourtCandidates(courtId).length > 0;
+        || psOtherCourtCandidates(courtId).length > 0
+        || psBlockCandidates().length > 0;
       const canSwap = !m.winner && !hasMatchStarted(m) && hasAnyoneToSwapIn;
       const swapHint = m.winner || hasMatchStarted(m)
         ? 'Scoring already started on this court — can\'t swap once a match is underway.'
@@ -7141,9 +7164,24 @@ function initInstallBanner(){
 // themselves. Players with no gender set are treated as flexible and never
 // block a possible mixed pairing.
 function psBuildMixedGenderOrder(pool, randomize) {
-  const males = pool.filter(p => p.gender === 'M');
-  const females = pool.filter(p => p.gender === 'F');
-  const others = pool.filter(p => p.gender !== 'M' && p.gender !== 'F');
+  // Fixed Duo pairs take priority over gender-based pairing — pull them out
+  // as forced pairs first, so partners always start out adjacent in the
+  // queue (and therefore always land on the same team, never split up).
+  const remaining = pool.slice();
+  const duoPairs = [];
+  (state.fixedDuos || []).forEach(([id1, id2]) => {
+    const i1 = remaining.findIndex(p => p.id === id1);
+    const i2 = remaining.findIndex(p => p.id === id2);
+    if (i1 !== -1 && i2 !== -1) {
+      const pair = [remaining[i1], remaining[i2]];
+      [i1, i2].sort((a, b) => b - a).forEach(idx => remaining.splice(idx, 1));
+      duoPairs.push(pair);
+    }
+  });
+
+  const males = remaining.filter(p => p.gender === 'M');
+  const females = remaining.filter(p => p.gender === 'F');
+  const others = remaining.filter(p => p.gender !== 'M' && p.gender !== 'F');
   if (randomize) { shuffleArray(males); shuffleArray(females); shuffleArray(others); }
 
   const pairs = [];
@@ -7158,9 +7196,10 @@ function psBuildMixedGenderOrder(pool, randomize) {
     pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
   }
 
-  if (randomize) shuffleArray(pairs);
+  const allPairs = duoPairs.concat(pairs);
+  if (randomize) shuffleArray(allPairs);
   const ordered = [];
-  pairs.forEach(pair => pair.forEach(p => ordered.push(p)));
+  allPairs.forEach(pair => pair.forEach(p => ordered.push(p)));
   return ordered;
 }
 
@@ -7198,6 +7237,62 @@ function psInit() {
   return true;
 }
 
+// Pull the next 4 entries off the front of the queue for a new match —
+// but never split a Fixed Duo across two different matches, or across
+// opposing teams within the same match. Scans the queue front-to-back,
+// grouping each player with their duo partner (wherever that partner
+// currently sits) into a single 2-player "unit"; unpaired players are
+// 1-player units. Units are taken in queue order until 4 players are
+// collected. If a duo-unit won't fit in the one remaining slot, it's left
+// in the queue (never broken up) and the scan keeps looking for a solo
+// player to fill that last spot instead. Returns null if 4 players can't
+// be assembled without splitting a duo.
+function psPullNextFour(ps) {
+  const queue = ps.queue;
+  const n = queue.length;
+  const consumed = new Set();
+  const units = [];
+  for (let i = 0; i < n; i++) {
+    if (consumed.has(i)) continue;
+    const entry = queue[i];
+    const partnerId = getFixedDuoPartner(entry.id);
+    const partnerIdx = partnerId
+      ? queue.findIndex((e, idx) => idx > i && e.id === partnerId && !consumed.has(idx))
+      : -1;
+    if (partnerIdx !== -1) {
+      units.push({ indices: [i, partnerIdx], size: 2 });
+      consumed.add(i); consumed.add(partnerIdx);
+    } else {
+      units.push({ indices: [i], size: 1 });
+      consumed.add(i);
+    }
+  }
+
+  let total = 0;
+  const selected = [];
+  for (const u of units) {
+    if (total === 4) break;
+    if (u.size <= 4 - total) {
+      selected.push(...u.indices);
+      total += u.size;
+    }
+    // else: this duo doesn't fit the one remaining slot — leave it intact
+    // in the queue and keep scanning for a solo player instead.
+  }
+  if (total < 4) return null;
+
+  selected.sort((a, b) => a - b);
+  const rawFour = selected.map(idx => queue[idx]);
+  // Reorder so any duo pair lands adjacent (teammates), not split across
+  // opposing sides — same helper Round Robin uses for the same purpose.
+  const four = honorFixedDuosInFour(rawFour) || rawFour;
+
+  // Remove the pulled entries from the queue, highest index first so
+  // earlier indices stay valid while splicing.
+  selected.sort((a, b) => b - a).forEach(idx => queue.splice(idx, 1));
+  return four;
+}
+
 // Pull next 4 from queue and start a match on an available court
 function psFillCourts() {
   const ps = state.paddleStack;
@@ -7223,8 +7318,9 @@ function psFillCourts() {
   const beforeFrontIds = new Set(ps.queue.slice(0, 4).map(e => e.id));
   const maxCourts = ps.numCourts;
   while (ps.courts.length < maxCourts && ps.queue.length >= 4) {
+    const slot = psPullNextFour(ps);
+    if (!slot) break; // couldn't assemble 4 without splitting a fixed duo further than possible
     const courtNum = ps.courts.length + 1;
-    const slot = ps.queue.splice(0, 4);
     const [p1, p2, p3, p4] = slot;
     const matchType = psMatchType([p1, p2], [p3, p4]);
     ps.courts.push({
@@ -8043,6 +8139,37 @@ function psTag(m, team, slot) {
   return (arr && arr[slot]) ? arr[slot] : 'N';
 }
 
+// If the player leaving `slot` has a Fixed Duo partner who is their CURRENT
+// teammate on this same court, swapping them out splits the duo up. Doesn't
+// block the swap (an injury or no-show may make that unavoidable) — just
+// returns a short note to tack onto the confirmation toast so the organizer
+// notices.
+function psDuoBreakNote(m, team, slot) {
+  const outId = team === 'A' ? m.teamA[slot] : m.teamB[slot];
+  const partnerId = getFixedDuoPartner(outId);
+  if (!partnerId) return '';
+  const teammates = team === 'A' ? m.teamA : m.teamB;
+  return teammates.includes(partnerId) ? ' ⚠️ Splits up a Fixed Duo.' : '';
+}
+
+// Every player currently sitting in the accumulating Winners/Losers blocks
+// (already off any court, waiting for their block to fill and flush to the
+// queue) — also fair game for a swap-in, same as queue/bench/other courts.
+function psBlockCandidates() {
+  const ps = state.paddleStack;
+  if (!ps) return [];
+  const out = [];
+  (ps.wBlock || []).forEach((e, i) => {
+    const p = getPlayer(e.id);
+    if (p) out.push({ id: e.id, name: p.name, tag: e.tag || 'W', block: 'w', blockIdx: i });
+  });
+  (ps.lBlock || []).forEach((e, i) => {
+    const p = getPlayer(e.id);
+    if (p) out.push({ id: e.id, name: p.name, tag: e.tag || 'L', block: 'l', blockIdx: i });
+  });
+  return out;
+}
+
 // Every player currently occupying a slot on a DIFFERENT court whose match
 // hasn't started scoring yet and has no winner — i.e. safe to pull into a
 // cross-court swap. Used so "Swap In a Player" isn't limited to the queue
@@ -8092,7 +8219,8 @@ function openPsSwitchPlayerModal(courtId, forcePlainSwap, forcePartnerSwap) {
   const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
   const hasSwapInOptions = ps.queue.length > 0
     || availableSubPlayers().some(p => !onCourtIds.has(p.id))
-    || psOtherCourtCandidates(courtId).length > 0;
+    || psOtherCourtCandidates(courtId).length > 0
+    || psBlockCandidates().length > 0;
 
   const pA1 = getPlayer(m.teamA[0]), pA2 = getPlayer(m.teamA[1]);
   const pB1 = getPlayer(m.teamB[0]), pB2 = getPlayer(m.teamB[1]);
@@ -8194,8 +8322,9 @@ function openPsPickSwapInModal(courtId, team, slot) {
   const onCourtIds = new Set(ps.courts.flatMap(c => [...c.teamA, ...c.teamB]));
   const subs = availableSubPlayers().filter(p => !onCourtIds.has(p.id));
   const otherCourt = psOtherCourtCandidates(courtId);
+  const blocks = psBlockCandidates();
 
-  if (!ps.queue.length && !subs.length && !otherCourt.length) {
+  if (!ps.queue.length && !subs.length && !otherCourt.length && !blocks.length) {
     toast('No other players available to swap in.', 'warning');
     return;
   }
@@ -8228,13 +8357,24 @@ function openPsPickSwapInModal(courtId, team, slot) {
       <span style="font-size:11px; color:var(--text-faint);">Court ${c.courtNum} — will swap</span>
     </button>`).join('');
 
+  // Players waiting in the Winners/Losers accumulation blocks — off any
+  // court, not yet flushed to the queue, but still fair game to swap in.
+  const blockHtml = blocks.map(b => `
+    <button class="btn btn-secondary btn-block" style="margin-top:6px; justify-content:space-between;"
+      data-action="ps-do-switch-player-block" data-court="${courtId}" data-team="${team}" data-slot="${slot}"
+      data-block="${b.block}" data-block-idx="${b.blockIdx}">
+      <span>${tagIcon(b.tag)} ${esc(b.name)}</span>
+      <span style="font-size:11px; color:var(--text-faint);">${b.block === 'w' ? 'Winners' : 'Losers'} block</span>
+    </button>`).join('');
+
   openModal(`
     <div class="modal-title">Swap In a Player</div>
-    <div class="modal-sub">Replacing <b style="color:var(--loss);">${esc(outPlayer?.name || '—')}</b> (${tagIcon(outTag)} Team ${team}). The swapped-out player returns to their queue position (or takes the incoming player's old court spot).</div>
+    <div class="modal-sub">Replacing <b style="color:var(--loss);">${esc(outPlayer?.name || '—')}</b> (${tagIcon(outTag)} Team ${team}). The swapped-out player returns to their queue position (or takes the incoming player's old spot).</div>
     ${queueHtml ? `<div class="eyebrow" style="margin:12px 2px 6px;">Pick from queue</div>${queueHtml}` : ''}
     ${ps.queue.length > 8 ? `<p class="helper-text" style="text-align:center;">Showing first 8 — see Queue tab for full list.</p>` : ''}
     ${subHtml ? `<div class="eyebrow" style="margin:14px 2px 6px;">Sub Players on the bench</div>${subHtml}` : ''}
     ${otherCourtHtml ? `<div class="eyebrow" style="margin:14px 2px 6px;">On other courts</div>${otherCourtHtml}` : ''}
+    ${blockHtml ? `<div class="eyebrow" style="margin:14px 2px 6px;">Waiting in a block</div>${blockHtml}` : ''}
     <div class="modal-actions" style="margin-top:14px;">
       <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
     </div>
@@ -8309,6 +8449,7 @@ function psdoSwitchPlayer(courtId, team, slot, queueIdx) {
     return;
   }
 
+  const duoNote = psDuoBreakNote(m, team, slot);
   psPushHistory();
 
   // Place the incoming player on court
@@ -8325,7 +8466,7 @@ function psdoSwitchPlayer(courtId, team, slot, queueIdx) {
   );
 
   saveAll(); renderAll(); closeModal();
-  toast(`${playerName(inEntry.id)} steps in — ${playerName(outId)} returns to queue.`, 'success');
+  toast(`${playerName(inEntry.id)} steps in — ${playerName(outId)} returns to queue.${duoNote}`, duoNote ? 'warning' : 'success');
 }
 
 // Bring a bench Sub Player onto court in place of an existing player.
@@ -8365,6 +8506,7 @@ function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
     return;
   }
 
+  const duoNote = psDuoBreakNote(m, team, slot);
   psPushHistory();
 
   // Place the sub on court, tagged as a fresh arrival
@@ -8380,7 +8522,7 @@ function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
   );
 
   saveAll(); renderAll(); closeModal();
-  toast(`${sub.name} subs in — ${playerName(outId)} returns to the queue.`, 'success');
+  toast(`${sub.name} subs in — ${playerName(outId)} returns to the queue.${duoNote}`, duoNote ? 'warning' : 'success');
 }
 
 // Bring a player in from a DIFFERENT court, swapping positions: the incoming
@@ -8423,6 +8565,7 @@ function psdoSwitchPlayerFromCourt(courtId, team, slot, fromCourtId, fromTeam, f
     return;
   }
 
+  const duoNote = psDuoBreakNote(m, team, slot) || psDuoBreakNote(fromM, fromTeam, fromSlot);
   psPushHistory();
 
   // Place the incoming player here, carrying their current tag with them
@@ -8443,7 +8586,61 @@ function psdoSwitchPlayerFromCourt(courtId, team, slot, fromCourtId, fromTeam, f
   );
 
   saveAll(); renderAll(); closeModal();
-  toast(`${playerName(inId)} (Court ${fromM.courtNum}) ↔ ${playerName(outId)} (Court ${m.courtNum}) swapped.`, 'success');
+  toast(`${playerName(inId)} (Court ${fromM.courtNum}) ↔ ${playerName(outId)} (Court ${m.courtNum}) swapped.${duoNote}`, duoNote ? 'warning' : 'success');
+}
+
+// Bring a player in from the Winners or Losers accumulation block. The
+// outgoing on-court player takes the incoming player's exact spot in that
+// same block (re-tagged to match the block they're now sitting in — a
+// block is uniformly W or uniformly L by definition), so block order and
+// size stay consistent for the next flush to the queue.
+function psdoSwitchPlayerFromBlock(courtId, team, slot, blockType, blockIdx) {
+  const ps = state.paddleStack;
+  if (!ps) return;
+  const m = ps.courts.find(c => c.id === courtId);
+  if (!m) return;
+  if (m.winner || hasMatchStarted(m)) {
+    toast('Match already decided — cannot switch players.', 'warning');
+    return;
+  }
+  const block = blockType === 'w' ? ps.wBlock : ps.lBlock;
+  if (!block || blockIdx < 0 || blockIdx >= block.length) {
+    toast('That player is no longer waiting in the block.', 'warning');
+    closeModal();
+    return;
+  }
+
+  if (!Array.isArray(m.tagsA)) m.tagsA = ['N', 'N'];
+  if (!Array.isArray(m.tagsB)) m.tagsB = ['N', 'N'];
+
+  const outId  = team === 'A' ? m.teamA[slot] : m.teamB[slot];
+  const outTag = psTag(m, team, slot);
+  const inEntry = block[blockIdx];
+
+  if (inEntry.id === outId) {
+    toast('That player is already on court.', 'warning');
+    closeModal();
+    return;
+  }
+
+  const duoNote = psDuoBreakNote(m, team, slot);
+  psPushHistory();
+
+  // Place the incoming player on court, carrying the block's tag with them
+  if (team === 'A') { m.teamA[slot] = inEntry.id; m.tagsA[slot] = inEntry.tag || (blockType === 'w' ? 'W' : 'L'); }
+  else              { m.teamB[slot] = inEntry.id; m.tagsB[slot] = inEntry.tag || (blockType === 'w' ? 'W' : 'L'); }
+
+  // Outgoing player takes the incoming player's exact spot in the same block,
+  // re-tagged to match (blocks are uniformly W or uniformly L).
+  block.splice(blockIdx, 1, { id: outId, tag: blockType === 'w' ? 'W' : 'L' });
+
+  m.matchType = psMatchType(
+    [{ id: m.teamA[0], tag: m.tagsA[0] || 'N' }, { id: m.teamA[1], tag: m.tagsA[1] || 'N' }],
+    [{ id: m.teamB[0], tag: m.tagsB[0] || 'N' }, { id: m.teamB[1], tag: m.tagsB[1] || 'N' }]
+  );
+
+  saveAll(); renderAll(); closeModal();
+  toast(`${playerName(inEntry.id)} steps in — ${playerName(outId)} moves to the ${blockType === 'w' ? 'Winners' : 'Losers'} block.${duoNote}`, duoNote ? 'warning' : 'success');
 }
 
 // Execute the Switch Partner swap: two on-court players swap teams, both stay on court.
@@ -8473,6 +8670,7 @@ function psdoPartnerSwap(courtId, swapSpec) {
     return;
   }
 
+  const duoNote = psDuoBreakNote(m, 'A', aSlot) || psDuoBreakNote(m, 'B', bSlot);
   psPushHistory();
 
   // Swap
@@ -8486,7 +8684,7 @@ function psdoPartnerSwap(courtId, swapSpec) {
   );
 
   saveAll(); renderAll(); closeModal();
-  toast(`Partners swapped — ${playerName(bId)} & ${playerName(aId)} switched sides.`, 'success');
+  toast(`Partners swapped — ${playerName(bId)} & ${playerName(aId)} switched sides.${duoNote}`, duoNote ? 'warning' : 'success');
 }
 
 function psConfirmStart() {
