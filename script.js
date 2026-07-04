@@ -91,7 +91,8 @@ const DEFAULT_SETTINGS = {
   sessionPlan: null,      // { totalMatches, gamesPerPlayer, label, matchesAtStart } — active Round Robin session length plan, or null if none chosen yet
   generateFullSchedule: false, // Round Robin "one-time generation": build every round of the chosen session length right away instead of one generation at a time
   psRandomizeStart: true,  // Paddle Stack: shuffle the initial queue instead of using roster/check-in order
-  psBlockSize: 4           // Paddle Stack: how many winners/losers accumulate before a block flushes to the queue
+  psBlockSize: 4,          // Paddle Stack: how many winners/losers accumulate before a block flushes to the queue
+  psMixedGenderPairing: true // Paddle Stack: pair a male with a female partner at the start whenever the roster allows it
 };
 
 // Round Robin "session length" choices offered when starting a fresh session.
@@ -1953,6 +1954,18 @@ function openCSOPSetupModal(activeCount) {
           <div class="track"></div><div class="thumb"></div>
         </label>
       </div>
+    </div>
+
+    <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
+    <div class="card" style="margin:0 0 4px;">
+      <p class="helper-text" style="margin-top:0;">Lock two players together so they always play on the same team when both are active. Only honored in Smart Auto-Match.</p>
+      ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
+          <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
+          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}">Remove</button>
+        </div>
+      `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
+      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo">+ Add Fixed Duo</button>
     </div>
 
     <div class="modal-actions" style="margin-top:16px;">
@@ -6007,19 +6020,6 @@ function renderSettingsView(el){
       <p class="helper-text" style="margin-top:0;">Wipe stats or start completely fresh. These actions can't be undone.</p>
       <button class="btn btn-danger btn-block" data-action="open-danger-zone">Clear / Reset Options</button>
     </div>
-
-    <div class="section-title" style="margin-top:20px;">Fixed Duos 🔗</div>
-    <div class="card">
-      <p class="helper-text" style="margin-top:0;">Lock two players together so they always play on the same team when both are active.</p>
-      <p class="helper-text" style="margin-top:0; color:var(--ball);">⚠️ Only honored in <b>Smart Auto-Match</b>. Round Robin and Paddle Stack Queue don't check duos, so partners can still end up on opposing teams in those modes.</p>
-      ${(state.fixedDuos && state.fixedDuos.length) ? state.fixedDuos.map(([id1,id2]) => `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft);">
-          <span style="font-weight:700; font-size:13.5px;">${esc(playerName(id1))} <span style="color:var(--ball);">🔗</span> ${esc(playerName(id2))}</span>
-          <button class="btn btn-ghost btn-sm" data-action="remove-fixed-duo" data-p1="${id1}" data-p2="${id2}">Remove</button>
-        </div>
-      `).join('') : `<p class="helper-text" style="margin:0; color:var(--text-faint);">No fixed duos set.</p>`}
-      <button class="btn btn-secondary btn-block" style="margin-top:12px;" data-action="open-add-fixed-duo">+ Add Fixed Duo</button>
-    </div>
   `;
 }
 
@@ -7163,6 +7163,10 @@ function initInstallBanner(){
 // leftover players — plus anyone with no gender set — are paired up among
 // themselves. Players with no gender set are treated as flexible and never
 // block a possible mixed pairing.
+// Gender-based pairing itself is controlled by the "Male/Female Generation"
+// on/off switch in Paddle Stack Setup (state.settings.psMixedGenderPairing).
+// When it's off, players are simply paired up in pool order (still honoring
+// Fixed Duos first) without regard to gender.
 function psBuildMixedGenderOrder(pool, randomize) {
   // Fixed Duo pairs take priority over gender-based pairing — pull them out
   // as forced pairs first, so partners always start out adjacent in the
@@ -7179,21 +7183,33 @@ function psBuildMixedGenderOrder(pool, randomize) {
     }
   });
 
-  const males = remaining.filter(p => p.gender === 'M');
-  const females = remaining.filter(p => p.gender === 'F');
-  const others = remaining.filter(p => p.gender !== 'M' && p.gender !== 'F');
-  if (randomize) { shuffleArray(males); shuffleArray(females); shuffleArray(others); }
+  const genderPairingOn = state.settings.psMixedGenderPairing !== false;
+  let pairs = [];
 
-  const pairs = [];
-  const mixedCount = Math.min(males.length, females.length);
-  for (let i = 0; i < mixedCount; i++) pairs.push([males[i], females[i]]);
+  if (genderPairingOn) {
+    const males = remaining.filter(p => p.gender === 'M');
+    const females = remaining.filter(p => p.gender === 'F');
+    const others = remaining.filter(p => p.gender !== 'M' && p.gender !== 'F');
+    if (randomize) { shuffleArray(males); shuffleArray(females); shuffleArray(others); }
 
-  // Whichever gender had the surplus, plus everyone with no gender set,
-  // gets paired up together — there's no opposite-gender partner left to give them.
-  const leftover = males.slice(mixedCount).concat(females.slice(mixedCount)).concat(others);
-  if (randomize) shuffleArray(leftover);
-  for (let i = 0; i < leftover.length; i += 2) {
-    pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
+    const mixedCount = Math.min(males.length, females.length);
+    for (let i = 0; i < mixedCount; i++) pairs.push([males[i], females[i]]);
+
+    // Whichever gender had the surplus, plus everyone with no gender set,
+    // gets paired up together — there's no opposite-gender partner left to give them.
+    const leftover = males.slice(mixedCount).concat(females.slice(mixedCount)).concat(others);
+    if (randomize) shuffleArray(leftover);
+    for (let i = 0; i < leftover.length; i += 2) {
+      pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
+    }
+  } else {
+    // Gender pairing switched off — pair up remaining players in pool order
+    // (or shuffled order when randomize is on), ignoring gender entirely.
+    const rest = remaining.slice();
+    if (randomize) shuffleArray(rest);
+    for (let i = 0; i < rest.length; i += 2) {
+      pairs.push(rest[i + 1] ? [rest[i], rest[i + 1]] : [rest[i]]);
+    }
   }
 
   const allPairs = duoPairs.concat(pairs);
@@ -8047,6 +8063,7 @@ function openPaddleStackSetupModal() {
   const currentRandomize = state.settings.psRandomizeStart !== false;
   const currentBlockSize = clamp(parseInt(state.settings.psBlockSize, 10) || 4, 2, 8);
   const blockSizeOptions = [2, 4, 6, 8];
+  const currentGenderPairing = state.settings.psMixedGenderPairing !== false;
 
   openModal(`
     <div class="modal-title">🎯 Paddle Stack Setup</div>
@@ -8058,6 +8075,20 @@ function openPaddleStackSetupModal() {
       <button type="button" class="btn ${!currentRandomize ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-toggle-randomize" data-value="false">📋 Roster Order</button>
     </div>
     <p class="helper-text" style="margin:2px 2px 8px;">${currentRandomize ? 'First matches are shuffled — not based on who checked in first.' : 'First matches follow roster/check-in order.'}</p>
+
+    <div class="eyebrow" style="margin:14px 2px 8px;">Male/Female Generation</div>
+    <div class="card" style="margin:0 0 4px; padding:4px 14px;">
+      <div class="toggle-row">
+        <div>
+          <div class="t-label">⚥ Mixed Gender Pairing</div>
+          <div class="t-hint">Pair a male with a female partner at the start of the session whenever the roster allows it. Turn off to ignore gender when building the starting order.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="psGenderPairingToggle" ${currentGenderPairing ? 'checked' : ''}>
+          <div class="track"></div><div class="thumb"></div>
+        </label>
+      </div>
+    </div>
 
     <div class="eyebrow" style="margin:14px 2px 8px;">Block Size</div>
     <div style="display:flex; gap:8px; margin-bottom:4px;">
@@ -8693,6 +8724,8 @@ function psConfirmStart() {
     const v = parseInt(scoreEl.value, 10);
     state.settings.winningScore = (isNaN(v) || v < 1) ? 11 : v;
   }
+  const genderEl = document.getElementById('psGenderPairingToggle');
+  if (genderEl) state.settings.psMixedGenderPairing = genderEl.checked;
   state.settings.matchMode = 'PaddleStack';
   saveAll();
   closeModal();
