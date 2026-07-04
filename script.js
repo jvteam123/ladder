@@ -2453,9 +2453,9 @@ function renderRotationCourtScoreboard(m) {
             title="Undo serve decision"
             ${(!m._serveUndoStack || !m._serveUndoStack.length) ? 'disabled' : ''}>↩️${(m._serveUndoStack && m._serveUndoStack.length) ? ' '+m._serveUndoStack.length : ''}</button>
         </div>
-        <button class="btn btn-primary btn-block"
+        <button class="btn btn-primary btn-block" style="${m.winner ? 'background:var(--win); border-color:var(--win); color:#04150c;' : ''}"
           data-action="confirm-rc-match" data-court="${m.id}">
-          ✅ Confirm Result &amp; Auto-Generate Next
+          ✅ Submit Result
         </button>
         <div style="display:flex; gap:8px; margin-top:8px;">
           <button class="btn btn-ghost btn-sm" style="flex:1;"
@@ -5330,7 +5330,7 @@ function renderMatchView(el){
               <button class="btn btn-secondary btn-sm sideout-btn" style="flex:1;" data-action="rr-side-out" data-match="${m.id}" ${(m.winner || (!m.firstServe && m.serverNum===1))?'disabled':''}>🔁 Side Out</button>
               <button class="btn btn-ghost btn-sm undo-serve-btn" data-action="rr-undo-serve" data-match="${m.id}" title="Undo the last serve decision (1st server / serve 2 / side out)" ${(!m._serveUndoStack || !m._serveUndoStack.length)?'disabled':''}>↩️${(m._serveUndoStack && m._serveUndoStack.length) ? ' '+m._serveUndoStack.length : ''}</button>
             </div>
-            <button class="btn btn-primary btn-block" data-action="confirm-rr-match" data-match="${m.id}">Confirm Result &amp; Pull Next Match</button>
+            <button class="btn btn-primary btn-block" style="${m.winner ? 'background:var(--win); border-color:var(--win); color:#04150c;' : ''}" data-action="confirm-rr-match" data-match="${m.id}">✅ Submit Result</button>
             <div style="display:flex; gap:8px; margin-top:8px;">
               <button class="btn btn-ghost btn-sm" style="flex:1;" data-action="rr-skip-match" data-match="${m.id}" title="${m.winner ? 'This match already has a winner selected' : hasMatchStarted(m) ? 'Scoring has started — finish or undo the match instead' : 'Move this match to the back of the queue'}" ${(m.winner || hasMatchStarted(m)) ? 'disabled' : ''}>⏭️ Skip Match</button>
               <button class="btn btn-ghost btn-sm" style="flex:1; color:var(--loss);" data-action="rr-forfeit-match" data-match="${m.id}" title="${m.winner ? 'This match already has a winner selected' : hasMatchStarted(m) ? 'Scoring has started — finish or undo the match instead' : 'Record this match as a forfeit'}" ${(m.winner || hasMatchStarted(m)) ? 'disabled' : ''}>🚩 Forfeit Match</button>
@@ -7673,9 +7673,9 @@ function renderPaddleStackView(el) {
               data-action="ps-undo-serve" data-court="${m.id}"
               ${(!m._serveUndoStack || !m._serveUndoStack.length) ? 'disabled' : ''}>↩️${(m._serveUndoStack && m._serveUndoStack.length) ? ' '+m._serveUndoStack.length : ''}</button>
           </div>
-          <button class="btn btn-primary btn-block"
+          <button class="btn btn-primary btn-block" style="${m.winner ? 'background:var(--win); border-color:var(--win); color:#04150c;' : ''}"
             data-action="ps-confirm-match" data-court="${m.id}">
-            ✅ Confirm Result &amp; Next Match
+            ✅ Submit Result
           </button>
           ${(() => {
             const nextType = psNextMatchType(m.id);
