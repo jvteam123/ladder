@@ -971,6 +971,22 @@ body { transition: background-color var(--t-med), color var(--t-med); }
   box-shadow: 0 6px 20px -4px var(--pk-yellow-glow), 0 1px 0 rgba(255,255,255,0.15) inset !important;
   filter: brightness(1.08) !important;
 }
+/* "Ready to submit" hint — applied to the winner-confirm button once a
+   winner has been picked for the match, so it stands out from the default
+   yellow .btn-primary. Uses the same --win green as winner stats elsewhere. */
+.btn-win-ready {
+  background: linear-gradient(135deg, var(--win) 0%, var(--win-dim) 100%) !important;
+  color: #04150c !important;
+  box-shadow: 0 4px 14px -4px var(--pk-green-glow), 0 1px 0 rgba(255,255,255,0.15) inset !important;
+}
+.btn-win-ready:hover {
+  box-shadow: 0 6px 20px -4px var(--pk-green-glow), 0 1px 0 rgba(255,255,255,0.15) inset !important;
+  filter: brightness(1.08) !important;
+}
+html.light-mode .btn-win-ready {
+  color: #fff !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
 .btn-court {
   background: linear-gradient(135deg, var(--court) 0%, var(--court-dim) 100%) !important;
   box-shadow: 0 4px 14px -4px var(--pk-blue-glow);
