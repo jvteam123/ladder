@@ -674,13 +674,16 @@ function openModal(html, dismissible){
 /* ============================================================
    PLAYER MODEL HELPERS
    ============================================================ */
-function newPlayer(name, isSub){
+function newPlayer(name, isSub, gender){
   return {
     id: uid('p'),
     name: name.trim(),
     active: true,
     isSub: !!isSub,        // Sub Players sit on the bench out of normal rotation —
                             // they're only eligible to sub in for a Tired/Injured player's slot.
+    gender: (gender === 'M' || gender === 'F') ? gender : null, // 'M' | 'F' | null (unspecified) —
+                            // optional. Lets Paddle Stack build mixed-gender partner pairs when
+                            // a player wants a male/female partner instead of a random one.
     condition: 'ok',        // 'ok' | 'tired' | 'injured'
     gamesPlayed: 0,
     wins: 0,
@@ -821,13 +824,13 @@ function goToAddPlayer(message){
   }, 250);
 }
 
-function addPlayer(name, isSub, duprRating){
+function addPlayer(name, isSub, duprRating, gender){
   name = (name||'').trim();
   if(!name){ toast('Enter a name first.', 'warning'); return; }
   if(state.players.some(p=>p.name.toLowerCase()===name.toLowerCase())){
     toast('A player with that name already exists.', 'warning'); return;
   }
-  const p = newPlayer(name, isSub);
+  const p = newPlayer(name, isSub, gender);
   if(duprRating){
     const parsed = parseFloat(duprRating);
     p.duprRating = isNaN(parsed) ? null : Math.round(parsed * 1000) / 1000;
@@ -857,7 +860,7 @@ function bulkImport(text){
   toast(`Imported ${added} player${added!==1?'s':''}${skipped?`, skipped ${skipped} duplicate${skipped!==1?'s':''}`:''}.`, 'success');
 }
 
-function editPlayerName(id, name, isSub, duprRating){
+function editPlayerName(id, name, isSub, duprRating, gender){
   name = (name||'').trim();
   if(!name){ toast('Name cannot be empty.', 'warning'); return; }
   const p = getPlayer(id);
@@ -876,6 +879,10 @@ function editPlayerName(id, name, isSub, duprRating){
   if(duprRating !== undefined){
     const parsed = parseFloat(duprRating);
     p.duprRating = (!duprRating || isNaN(parsed)) ? null : Math.round(parsed * 1000) / 1000;
+  }
+  // Gender: 'M' | 'F' | '' (unspecified). undefined means "leave unchanged".
+  if(gender !== undefined){
+    p.gender = (gender === 'M' || gender === 'F') ? gender : null;
   }
   saveAll(); renderAll(); closeModal();
   toast('Player updated.', 'success');
@@ -5612,6 +5619,15 @@ function renderPlayersView(el){
         <label>DUPR Rating <span style="font-weight:400; color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
         <input type="number" id="newPlayerDupr" step="0.001" min="1" max="8" placeholder="e.g. 3.067" style="font-size:14px;">
       </div>
+      <div class="field" style="margin-bottom:8px;">
+        <label>Gender <span style="font-weight:400; color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional — helps pair mixed partners in Paddle Stack)</span></label>
+        <input type="hidden" id="newPlayerGender" value="">
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-primary btn-sm gender-select-btn" style="flex:1;" data-action="set-new-player-gender" data-gender="">Unspecified</button>
+          <button type="button" class="btn btn-secondary btn-sm gender-select-btn" style="flex:1;" data-action="set-new-player-gender" data-gender="M">♂ Male</button>
+          <button type="button" class="btn btn-secondary btn-sm gender-select-btn" style="flex:1;" data-action="set-new-player-gender" data-gender="F">♀ Female</button>
+        </div>
+      </div>
       <label class="sub-toggle-row">
         <input type="checkbox" id="newPlayerIsSub">
         <span class="sub-toggle-label">🔁 Register as Sub Player</span>
@@ -5638,6 +5654,11 @@ function renderPlayersView(el){
   function playerRow(p){
     const duoPartner = getFixedDuoPartner(p.id);
     const duoLabel = duoPartner ? `<span style="color:var(--ball); font-size:11px; font-weight:700; background:rgba(215,242,61,0.08); border:1px solid rgba(215,242,61,0.2); border-radius:999px; padding:2px 7px;">🔗 ${esc(playerName(duoPartner))}</span>` : '';
+    const genderLabel = p.gender === 'M'
+      ? `<span style="color:#4FA8FF; font-size:11px; font-weight:700; background:rgba(79,168,255,0.08); border:1px solid rgba(79,168,255,0.2); border-radius:999px; padding:2px 7px;">♂ Male</span>`
+      : p.gender === 'F'
+        ? `<span style="color:#FF6FB5; font-size:11px; font-weight:700; background:rgba(255,111,181,0.08); border:1px solid rgba(255,111,181,0.2); border-radius:999px; padding:2px 7px;">♀ Female</span>`
+        : '';
     const avatarClass = p.isSub ? 'avatar sub-avatar' : 'avatar';
     const avatarIcon = p.isSub ? '🔁' : initials(p.name);
     const winRate = p.gamesPlayed > 0 ? `${winPct(p)}% WR` : 'No games';
@@ -5648,6 +5669,7 @@ function renderPlayersView(el){
         <div class="pinfo">
           <div class="pname">
             ${esc(p.name)}
+            ${genderLabel}
             ${duoLabel}
           </div>
           <div class="pmeta">
@@ -6238,6 +6260,14 @@ document.addEventListener('click', function(e){
           <button class="btn btn-secondary btn-block" data-action="ps-move-queue-up" data-idx="${idx}" ${atFront ? 'disabled' : ''}>▲ Move Up One</button>
           <button class="btn btn-secondary btn-block" data-action="ps-move-queue-down" data-idx="${idx}" ${atBack ? 'disabled' : ''}>▼ Move Down One</button>
           <button class="btn btn-secondary btn-block" data-action="ps-move-queue-back" data-idx="${idx}" ${atBack ? 'disabled' : ''}>⏬ Move to Back</button>
+        </div>
+        <div class="modal-sub" style="margin-top:14px;">Change Status <span style="font-weight:400; color:var(--text-faint);">— fix the tag by hand if moving them broke a Winners/Losers block</span></div>
+        <div class="modal-actions" style="margin-top:6px; gap:8px;">
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-queue-tag" data-idx="${idx}" data-tag="N">🆕 New</button>
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-queue-tag" data-idx="${idx}" data-tag="W">🏆 Winner</button>
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-queue-tag" data-idx="${idx}" data-tag="L">💀 Loser</button>
+        </div>
+        <div class="modal-actions" style="margin-top:10px;">
           <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
         </div>
       `);
@@ -6246,9 +6276,39 @@ document.addEventListener('click', function(e){
     case 'ps-move-queue-up': psMoveQueueEntry(parseInt(t.dataset.idx, 10), -1); closeModal(); break;
     case 'ps-move-queue-down': psMoveQueueEntry(parseInt(t.dataset.idx, 10), 1); closeModal(); break;
     case 'ps-move-queue-front': psMoveQueueEntryTo(parseInt(t.dataset.idx, 10), 0); closeModal(); break;
+    case 'ps-set-queue-tag': psSetQueueTag(parseInt(t.dataset.idx, 10), t.dataset.tag); closeModal(); break;
     case 'ps-move-queue-back': {
       const ps = state.paddleStack;
       if (ps) psMoveQueueEntryTo(parseInt(t.dataset.idx, 10), ps.queue.length - 1);
+      closeModal();
+      break;
+    }
+    case 'ps-court-tag-menu': {
+      const ps = state.paddleStack;
+      if (!ps) break;
+      const courtId = t.dataset.courtId;
+      const team = t.dataset.team;
+      const i = parseInt(t.dataset.i, 10);
+      const m = ps.courts.find(c => c.id === courtId);
+      if (!m) break;
+      const id = team === 'A' ? m.teamA[i] : m.teamB[i];
+      const p = getPlayer(id);
+      openModal(`
+        <div class="modal-title">${esc(p?.name || 'Player')} — Court ${m.courtNum}</div>
+        <div class="modal-sub">Currently on court. Change their status tag so the next Winners/Losers block they join stays consistent.</div>
+        <div class="modal-actions" style="margin-top:14px; gap:8px;">
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="N">🆕 New</button>
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="W">🏆 Winner</button>
+          <button class="btn btn-secondary" style="flex:1;" data-action="ps-set-court-tag" data-court-id="${courtId}" data-team="${team}" data-i="${i}" data-tag="L">💀 Loser</button>
+        </div>
+        <div class="modal-actions" style="margin-top:10px;">
+          <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
+        </div>
+      `);
+      break;
+    }
+    case 'ps-set-court-tag': {
+      psSetCourtTag(t.dataset.courtId, t.dataset.team, parseInt(t.dataset.i, 10), t.dataset.tag);
       closeModal();
       break;
     }
@@ -6590,10 +6650,38 @@ document.addEventListener('click', function(e){
       const inp = document.getElementById('newPlayerName');
       const subChk = document.getElementById('newPlayerIsSub');
       const duprInp = document.getElementById('newPlayerDupr');
-      addPlayer(inp.value, subChk ? subChk.checked : false, duprInp ? duprInp.value : '');
+      const genderInp = document.getElementById('newPlayerGender');
+      addPlayer(inp.value, subChk ? subChk.checked : false, duprInp ? duprInp.value : '', genderInp ? genderInp.value : '');
       inp.value = '';
       if(subChk) subChk.checked = false;
       if(duprInp) duprInp.value = '';
+      if(genderInp) genderInp.value = '';
+      break;
+    }
+    case 'set-new-player-gender': {
+      const hidden = document.getElementById('newPlayerGender');
+      if(hidden) hidden.value = t.dataset.gender || '';
+      const group = t.parentElement;
+      if(group){
+        group.querySelectorAll('.gender-select-btn').forEach(function(b){
+          const active = b === t;
+          b.classList.toggle('btn-primary', active);
+          b.classList.toggle('btn-secondary', !active);
+        });
+      }
+      break;
+    }
+    case 'set-edit-player-gender': {
+      const hidden = document.getElementById('editGender');
+      if(hidden) hidden.value = t.dataset.gender || '';
+      const group = t.parentElement;
+      if(group){
+        group.querySelectorAll('.gender-select-btn').forEach(function(b){
+          const active = b === t;
+          b.classList.toggle('btn-primary', active);
+          b.classList.toggle('btn-secondary', !active);
+        });
+      }
       break;
     }
     case 'open-bulk-import':
@@ -6624,6 +6712,14 @@ document.addEventListener('click', function(e){
             <span style="font-size:12px; color:var(--text-faint); white-space:nowrap;">Leave blank = NR</span>
           </div>
           <p class="helper-text" style="margin:3px 2px 10px;">Enter your DUPR rating from the DUPR app. Displayed per player on the scoreboard.</p>
+          <label style="margin-top:4px; display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint); margin-bottom:5px;">Gender</label>
+          <input type="hidden" id="editGender" value="${p.gender === 'M' || p.gender === 'F' ? p.gender : ''}">
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button type="button" class="btn ${p.gender ? 'btn-secondary' : 'btn-primary'} btn-sm gender-select-btn" style="flex:1;" data-action="set-edit-player-gender" data-gender="">Unspecified</button>
+            <button type="button" class="btn ${p.gender === 'M' ? 'btn-primary' : 'btn-secondary'} btn-sm gender-select-btn" style="flex:1;" data-action="set-edit-player-gender" data-gender="M">♂ Male</button>
+            <button type="button" class="btn ${p.gender === 'F' ? 'btn-primary' : 'btn-secondary'} btn-sm gender-select-btn" style="flex:1;" data-action="set-edit-player-gender" data-gender="F">♀ Female</button>
+          </div>
+          <p class="helper-text" style="margin:0 2px 10px;">Optional. Helps Paddle Stack pair a mixed male/female partner at the start of a session.</p>
           <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-dim); cursor:pointer;">
             <input type="checkbox" id="editIsSub" ${p.isSub ? 'checked' : ''} style="width:16px; height:16px; accent-color:var(--court);">
             Sub Player (bench reserve)
@@ -6640,7 +6736,8 @@ document.addEventListener('click', function(e){
     case 'do-save-player': {
       const subChk = document.getElementById('editIsSub');
       const duprEl = document.getElementById('editDuprRating');
-      editPlayerName(t.dataset.id, document.getElementById('editName').value, subChk ? subChk.checked : undefined, duprEl ? duprEl.value : undefined);
+      const genderEl = document.getElementById('editGender');
+      editPlayerName(t.dataset.id, document.getElementById('editName').value, subChk ? subChk.checked : undefined, duprEl ? duprEl.value : undefined, genderEl ? genderEl.value : undefined);
       break;
     }
     case 'do-delete-player': removePlayer(t.dataset.id); break;
@@ -7022,16 +7119,53 @@ function initInstallBanner(){
    - Match card shows: 🏆 Winners vs Winners / 💀 Losers vs Losers / 🆕 New vs New
    ============================================================ */
 
+// Arrange a pool of players into the Paddle Stack starting order so that
+// consecutive pairs (which psFillCourts() takes as teammates — see the
+// [p1,p2]/[p3,p4] split below) are mixed-gender (Male+Female) partnerships
+// wherever the male/female counts allow it. If the counts aren't equal,
+// as many mixed pairs are formed as possible (min(males, females)) and the
+// leftover players — plus anyone with no gender set — are paired up among
+// themselves. Players with no gender set are treated as flexible and never
+// block a possible mixed pairing.
+function psBuildMixedGenderOrder(pool, randomize) {
+  const males = pool.filter(p => p.gender === 'M');
+  const females = pool.filter(p => p.gender === 'F');
+  const others = pool.filter(p => p.gender !== 'M' && p.gender !== 'F');
+  if (randomize) { shuffleArray(males); shuffleArray(females); shuffleArray(others); }
+
+  const pairs = [];
+  const mixedCount = Math.min(males.length, females.length);
+  for (let i = 0; i < mixedCount; i++) pairs.push([males[i], females[i]]);
+
+  // Whichever gender had the surplus, plus everyone with no gender set,
+  // gets paired up together — there's no opposite-gender partner left to give them.
+  const leftover = males.slice(mixedCount).concat(females.slice(mixedCount)).concat(others);
+  if (randomize) shuffleArray(leftover);
+  for (let i = 0; i < leftover.length; i += 2) {
+    pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
+  }
+
+  if (randomize) shuffleArray(pairs);
+  const ordered = [];
+  pairs.forEach(pair => pair.forEach(p => ordered.push(p)));
+  return ordered;
+}
+
 function psInit() {
   // Build initial queue from active roster — randomized by default so the
   // first generation doesn't just replay whoever was added to the roster
   // first. Organizer can turn this off in setup to use roster/check-in order.
   const pool = activePlayers().slice();
   if (pool.length < 4) { goToAddPlayer('Add a few more players to start — you need at least 4.'); return false; }
-  if (state.settings.psRandomizeStart !== false) shuffleArray(pool);
+  const randomize = state.settings.psRandomizeStart !== false;
+  // Order the pool in partner-pairs, favoring mixed male/female pairs — see
+  // psBuildMixedGenderOrder() above. When randomize is off, males/females/
+  // others each keep roster order and only the leftover pairing falls back
+  // to roster order too, so setup stays deterministic either way.
+  const orderedPool = psBuildMixedGenderOrder(pool, randomize);
 
-  // Initial queue: groups of 4, all tagged 'N' (new)
-  const queue = pool.map(p => ({ id: p.id, tag: 'N', sinceRound: 0 }));
+  // Initial queue: groups of 4 (2 consecutive partner-pairs each), all tagged 'N' (new)
+  const queue = orderedPool.map(p => ({ id: p.id, tag: 'N', sinceRound: 0 }));
 
   state.paddleStack = {
     queue,          // [{id, tag:'W'|'L'|'N', sinceRound}] — front is index 0
@@ -7551,7 +7685,40 @@ function renderPaddleStackView(el) {
   };
 }
 
-// Move a queue entry one spot up (-1) or down (+1). Used by the reorder
+// Manually override a queue entry's status tag (🆕 New / 🏆 Winner / 💀 Loser).
+// Lets an organizer fix a mismatch themselves — e.g. after reordering the
+// queue by hand, a block can end up with mixed tags (W, W, L, L) instead of
+// a clean same-status group. Re-tagging the moved player keeps the
+// Winners/Losers block logic (and the match-type label it drives) consistent.
+function psSetQueueTag(idx, tag) {
+  const ps = state.paddleStack;
+  if (!ps || isNaN(idx) || idx < 0 || idx >= ps.queue.length) return;
+  if (tag !== 'W' && tag !== 'L' && tag !== 'N') return;
+  psPushHistory();
+  ps.queue[idx].tag = tag;
+  saveAll(); renderAll();
+}
+
+// Same idea, but for a player currently on a court (before/while their match
+// is live). Recomputes the court's matchType so the "Winners vs Winners" /
+// "Mixed" label on the match card stays accurate after the change.
+function psSetCourtTag(courtId, team, i, tag) {
+  const ps = state.paddleStack;
+  if (!ps) return;
+  if (tag !== 'W' && tag !== 'L' && tag !== 'N') return;
+  const m = ps.courts.find(c => c.id === courtId);
+  if (!m) return;
+  const tagsKey = team === 'A' ? 'tagsA' : 'tagsB';
+  if (!m[tagsKey] || i < 0 || i >= m[tagsKey].length) return;
+  psPushHistory();
+  m[tagsKey][i] = tag;
+  const teamAEntries = m.teamA.map((id, idx) => ({ id, tag: m.tagsA[idx] }));
+  const teamBEntries = m.teamB.map((id, idx) => ({ id, tag: m.tagsB[idx] }));
+  m.matchType = psMatchType(teamAEntries, teamBEntries);
+  saveAll(); renderAll();
+}
+
+
 // arrows in the Queue tab so an organizer can manually bump someone without
 // doing a full player swap.
 function psMoveQueueEntry(idx, dir) {
@@ -7642,11 +7809,13 @@ function renderPaddleStackQueueView(el) {
     html += `<div class="section-title" style="color:var(--win);">▶ On Court (${ps.courts.length * 4})</div>`;
     html += `<div class="card" style="padding:6px 4px;">`;
     ps.courts.forEach(m => {
-      [...m.teamA.map((id, i) => ({id, tag: m.tagsA[i]})), ...m.teamB.map((id, i) => ({id, tag: m.tagsB[i]}))].forEach(entry => {
+      [...m.teamA.map((id, i) => ({id, tag: m.tagsA[i], team:'A', i})), ...m.teamB.map((id, i) => ({id, tag: m.tagsB[i], team:'B', i}))].forEach(entry => {
         const p = getPlayer(entry.id);
-        html += `<div class="queue-row"><span class="qrank" style="background:rgba(62,213,152,0.15); color:var(--win);">C${m.courtNum}</span>
-          <span style="font-size:13px;">${esc(p?.name || '—')}</span>
+        html += `<div class="queue-row" style="align-items:center;">
+          <span class="qrank" style="background:rgba(62,213,152,0.15); color:var(--win);">C${m.courtNum}</span>
+          <span style="font-size:13px; flex:1;">${esc(p?.name || '—')}</span>
           <span style="font-size:11px; color:${tagColor(entry.tag)};">${tagLabel(entry.tag)}</span>
+          <button class="btn btn-ghost btn-sm" style="padding:6px 10px; flex:none;" data-action="ps-court-tag-menu" data-court-id="${m.id}" data-team="${entry.team}" data-i="${entry.i}" title="Change status">⇅</button>
         </div>`;
       });
     });
