@@ -8715,6 +8715,43 @@ function psConfirmStart() {
   window.addEventListener('resize', updateTabsFade);
   updateTabsFade();
   nudgeTabsOnce();
+
+  // Desktop mouse support: the strip only scrolls horizontally, but a plain
+  // mouse (no touchpad/touch) has no native way to move it. Convert vertical
+  // wheel scrolling into horizontal movement, and support click-and-drag.
+  nav.addEventListener('wheel', function(e){
+    if(nav.scrollWidth <= nav.clientWidth) return; // nothing to scroll
+    // Prefer horizontal delta if the device already sends one (trackpad),
+    // otherwise fall back to converting vertical wheel movement.
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if(delta === 0) return;
+    e.preventDefault();
+    nav.scrollLeft += delta;
+  }, { passive: false });
+
+  nav.style.cursor = 'grab';
+  let isDragging = false, dragStartX = 0, dragStartScroll = 0, dragMoved = false;
+  nav.addEventListener('mousedown', function(e){
+    isDragging = true; dragMoved = false;
+    dragStartX = e.pageX;
+    dragStartScroll = nav.scrollLeft;
+    nav.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', function(e){
+    if(!isDragging) return;
+    const dx = e.pageX - dragStartX;
+    if(Math.abs(dx) > 3) dragMoved = true;
+    nav.scrollLeft = dragStartScroll - dx;
+  });
+  window.addEventListener('mouseup', function(){
+    if(!isDragging) return;
+    isDragging = false;
+    nav.style.cursor = 'grab';
+  });
+  // Suppress the tab-button click that would otherwise fire right after a drag.
+  nav.addEventListener('click', function(e){
+    if(dragMoved){ e.stopPropagation(); e.preventDefault(); dragMoved = false; }
+  }, true);
 })();
 
 /* ================================================================
