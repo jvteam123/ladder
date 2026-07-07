@@ -5,106 +5,183 @@
    (script.js). It adds two new tabs — Discover and Host — for
    posting/finding open play games across devices.
 
-   DATA LAYER: `OpenPlayAPI` below is a MOCK backend (localStorage,
-   single device only) so the full UI can be built and clicked through
-   today. Every method is async and shaped exactly like the future
-   Supabase calls will be, so swapping the body of each method for a
-   real `supabase.from(...)` call is a drop-in change — no UI code
-   needs to change. See OPEN_PLAY_DESIGN.md for the real schema.
+   DATA LAYER: `OpenPlayAPI` below is backed by Firebase — Firestore
+   for data (live, cross-device, realtime via onSnapshot) and Firebase
+   Auth (Google sign-in) for identity. See firebase-init.js for the
+   project config / SDK setup that this file depends on.
    ================================================================ */
 
 (function(){
 
-/* ---------------- MOCK BACKEND (swap for Supabase later) ---------------- */
+/* ---------------- LIVE BACKEND (Firebase Auth + Firestore) ---------------- */
 
-const OP_KEYS = { user: 'op_user_v1', events: 'op_events_v1', rsvps: 'op_rsvps_v1' };
+const EVENTS_COL = 'openPlayEvents';
+const RSVPS_COL  = 'openPlayRsvps';
 
-function opRead(key, fallback){
-  try{ const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
-  catch(e){ return fallback; }
+function fbReady(){ return !!(window.fbAuth && window.fbDb); }
+
+function rsvpDocId(eventId, uid){ return eventId + '_' + uid; }
+
+function mapAuthUser(u){
+  if(!u) return null;
+  return {
+    id: u.uid,
+    display_name: u.displayName || (u.email ? u.email.split('@')[0] : 'Player'),
+    avatar_url: u.photoURL || null,
+  };
 }
-function opWrite(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
 
 const OpenPlayAPI = {
-  // ----- auth (mock: local display-name profile; real version = Supabase Auth) -----
+  // ----- auth (Firebase Auth, Google sign-in) -----
   async getCurrentUser(){
-    return opRead(OP_KEYS.user, null);
+    if(!fbReady()) return null;
+    return mapAuthUser(window.fbAuth.currentUser);
   },
-  async signIn(displayName){
-    const user = { id: uid('user'), display_name: displayName.trim(), created_at: Date.now() };
-    opWrite(OP_KEYS.user, user);
-    return user;
+  onAuthChange(cb){
+    if(!fbReady()) return function(){};
+    return window.fbAuth.onAuthStateChanged(function(u){ cb(mapAuthUser(u)); });
+  },
+  async signInWithGoogle(){
+    if(!fbReady()) throw new Error('Sign-in isn\u2019t available right now.');
+    try{
+      const cred = await window.fbAuth.signInWithPopup(window.fbGoogleProvider);
+      return mapAuthUser(cred.user);
+    }catch(err){
+      // Popups get blocked in some mobile browsers / in-app webviews —
+      // fall back to a full-page redirect instead of failing silently.
+      const popupIssue = err && (
+        err.code === 'auth/popup-blocked' ||
+        err.code === 'auth/popup-closed-by-user' ||
+        err.code === 'auth/cancelled-popup-request' ||
+        err.code === 'auth/operation-not-supported-in-this-environment'
+      );
+      if(popupIssue && err.code !== 'auth/popup-closed-by-user'){
+        await window.fbAuth.signInWithRedirect(window.fbGoogleProvider);
+        return null; // page will reload once the redirect flow completes
+      }
+      throw err;
+    }
   },
   async signOut(){
-    localStorage.removeItem(OP_KEYS.user);
+    if(!fbReady()) return;
+    await window.fbAuth.signOut();
   },
 
-  // ----- events -----
-  async listEvents(){
-    const events = opRead(OP_KEYS.events, []);
-    const rsvps = opRead(OP_KEYS.rsvps, []);
-    return events
-      .filter(e => e.status !== 'cancelled')
-      .map(e => ({ ...e, rsvp_count: rsvps.filter(r => r.event_id === e.id && r.status === 'confirmed').length }))
-      .sort((a,b) => new Date(a.start_time) - new Date(b.start_time));
+  // ----- events (live, cross-device via Firestore) -----
+  subscribeEvents(onChange, onError){
+    if(!fbReady()){ onError && onError(new Error('Firebase not configured.')); return function(){}; }
+    return window.fbDb.collection(EVENTS_COL)
+      .orderBy('start_time', 'asc')
+      .onSnapshot(function(snap){
+        onChange(snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); }));
+      }, function(err){
+        console.error('Open Play events listener error:', err);
+        onError && onError(err);
+      });
   },
   async createEvent(payload, host){
-    const events = opRead(OP_KEYS.events, []);
-    const event = {
-      id: uid('evt'),
+    const event = Object.assign({
       host_id: host.id,
       host_name: host.display_name,
+      host_photo_url: host.avatar_url || null,
       status: 'open',
-      created_at: Date.now(),
-      ...payload
-    };
-    events.push(event);
-    opWrite(OP_KEYS.events, events);
-    return event;
+      rsvp_count: 0,
+      created_at: firebase.firestore.FieldValue.serverTimestamp(),
+    }, payload);
+    const ref = await window.fbDb.collection(EVENTS_COL).add(event);
+    return Object.assign({ id: ref.id }, event);
   },
   async cancelEvent(eventId){
-    const events = opRead(OP_KEYS.events, []);
-    const ev = events.find(e => e.id === eventId);
-    if(ev) ev.status = 'cancelled';
-    opWrite(OP_KEYS.events, events);
+    await window.fbDb.collection(EVENTS_COL).doc(eventId).update({ status: 'cancelled' });
   },
 
   // ----- rsvps -----
-  async listRsvpsForEvent(eventId){
-    return opRead(OP_KEYS.rsvps, []).filter(r => r.event_id === eventId && r.status === 'confirmed');
-  },
   async myRsvpForEvent(eventId, userId){
-    return opRead(OP_KEYS.rsvps, []).find(r => r.event_id === eventId && r.player_id === userId && r.status === 'confirmed') || null;
+    if(!userId) return null;
+    const snap = await window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, userId)).get();
+    if(!snap.exists) return null;
+    const data = snap.data();
+    return data.status === 'confirmed' ? Object.assign({ id: snap.id }, data) : null;
   },
   async rsvp(eventId, user){
-    const rsvps = opRead(OP_KEYS.rsvps, []);
-    const existing = rsvps.find(r => r.event_id === eventId && r.player_id === user.id);
-    if(existing){ existing.status = 'confirmed'; }
-    else{ rsvps.push({ id: uid('rsvp'), event_id: eventId, player_id: user.id, player_name: user.display_name, status: 'confirmed', created_at: Date.now() }); }
-    opWrite(OP_KEYS.rsvps, rsvps);
+    const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, user.id));
+    await window.fbDb.runTransaction(async function(tx){
+      const eventSnap = await tx.get(eventRef);
+      if(!eventSnap.exists) throw new Error('This event no longer exists.');
+      const ev = eventSnap.data();
+      const rsvpSnap = await tx.get(rsvpRef);
+      const alreadyConfirmed = rsvpSnap.exists && rsvpSnap.data().status === 'confirmed';
+      if(alreadyConfirmed) return;
+      if(ev.max_players && (ev.rsvp_count || 0) >= ev.max_players){
+        throw new Error('This event is full.');
+      }
+      tx.set(rsvpRef, {
+        event_id: eventId,
+        player_id: user.id,
+        player_name: user.display_name,
+        player_photo_url: user.avatar_url || null,
+        status: 'confirmed',
+        created_at: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.update(eventRef, { rsvp_count: (ev.rsvp_count || 0) + 1 });
+    });
   },
   async cancelRsvp(eventId, user){
-    const rsvps = opRead(OP_KEYS.rsvps, []);
-    const existing = rsvps.find(r => r.event_id === eventId && r.player_id === user.id);
-    if(existing) existing.status = 'cancelled';
-    opWrite(OP_KEYS.rsvps, rsvps);
+    const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, user.id));
+    await window.fbDb.runTransaction(async function(tx){
+      const rsvpSnap = await tx.get(rsvpRef);
+      if(!rsvpSnap.exists || rsvpSnap.data().status !== 'confirmed') return;
+      const eventSnap = await tx.get(eventRef);
+      tx.update(rsvpRef, { status: 'cancelled' });
+      if(eventSnap.exists){
+        const ev = eventSnap.data();
+        tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
+      }
+    });
   }
 };
-window.OpenPlayAPI = OpenPlayAPI; // exposed for later real-backend swap / debugging
+window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
 
 /* ---------------- local UI state ---------------- */
-const opUI = { user: null, events: [], loading: true, hostDraft: null };
+const opUI = { user: null, authReady: false, events: [], eventsReady: false, error: null };
+Object.defineProperty(opUI, 'loading', { get: function(){ return !opUI.authReady || !opUI.eventsReady; } });
 
-async function opBoot(){
-  opUI.user = await OpenPlayAPI.getCurrentUser();
-  opUI.events = await OpenPlayAPI.listEvents();
-  opUI.loading = false;
+let opUnsubEvents = null;
+
+function maybeRerenderOpenPlay(){
+  if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
+}
+
+function opBoot(){
+  // Catch the tail end of a signInWithRedirect() fallback, if one happened.
+  if(fbReady() && window.fbAuth.getRedirectResult){
+    window.fbAuth.getRedirectResult().catch(function(err){ console.warn('Google redirect sign-in error:', err); });
+  }
+
+  OpenPlayAPI.onAuthChange(function(user){
+    opUI.user = user;
+    opUI.authReady = true;
+    maybeRerenderOpenPlay();
+  });
+
+  opUnsubEvents = OpenPlayAPI.subscribeEvents(function(events){
+    opUI.events = events;
+    opUI.eventsReady = true;
+    opUI.error = null;
+    maybeRerenderOpenPlay();
+  }, function(err){
+    opUI.eventsReady = true;
+    opUI.error = err;
+    maybeRerenderOpenPlay();
+  });
 }
 
 /* ---------------- nav wiring ---------------- */
 function opAddNavSections(){
   if(!window.NAV_SECTIONS) return;
-  const already = NAV_SECTIONS.some(s => s.id === 'discover');
+  const already = NAV_SECTIONS.some(function(s){ return s.id === 'discover'; });
   if(already) return;
   NAV_SECTIONS.push(
     { id: 'discover', label: 'Discover', desc: 'Find open play near you',
@@ -135,28 +212,50 @@ function fmtWhen(iso){
     ' · ' + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
 }
 
+const GOOGLE_G_SVG = '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3c-7.7 0-14.4 4.4-17.7 10.7z"/><path fill="#4CAF50" d="M24 45c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 36.6 26.7 37.5 24 37.5c-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 40.5 16.2 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.8l6.2 5.2C39.4 37.5 45 32 45 24c0-1.4-.1-2.7-.4-3.5z"/></svg>';
+
 function signInPrompt(afterLabel){
   return `
     <div class="op-signin-card">
       <div class="op-signin-title">Sign in to ${esc(afterLabel)}</div>
-      <div class="op-signin-sub">Just a display name for now — this stands in for real account sign-in once the backend is connected.</div>
-      <input type="text" id="opSignInName" class="op-input" placeholder="Your name" maxlength="40" />
-      <button class="btn btn-primary btn-block" data-action="op-sign-in">Continue</button>
+      <div class="op-signin-sub">Sign in with Google to browse open play games, RSVP, or host your own.</div>
+      <button class="op-google-btn" data-action="op-sign-in">${GOOGLE_G_SVG}<span>Continue with Google</span></button>
+    </div>`;
+}
+
+function opUserChip(){
+  if(!opUI.user) return '';
+  const avatar = opUI.user.avatar_url
+    ? `<img class="op-user-avatar" src="${esc(opUI.user.avatar_url)}" alt="" referrerpolicy="no-referrer" />`
+    : `<div class="op-user-avatar op-user-avatar-fallback">${esc((opUI.user.display_name || '?').charAt(0).toUpperCase())}</div>`;
+  return `
+    <div class="op-user-chip">
+      ${avatar}
+      <span class="op-user-name">${esc(opUI.user.display_name)}</span>
+      <button class="op-user-signout" data-action="op-sign-out" title="Sign out">Sign out</button>
     </div>`;
 }
 
 /* ---------------- DISCOVER view ---------------- */
 function renderDiscoverView(el){
+  if(!fbReady()){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Open Play isn\u2019t configured yet.<br/>Check the Firebase setup in firebase-init.js.</div></div>`;
+    return;
+  }
   if(opUI.loading){
-    el.innerHTML = `<div class="op-empty">Loading open play…</div>`;
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Loading open play\u2026</div></div>`;
     return;
   }
   if(!opUI.user){
     el.innerHTML = `<div class="op-wrap">${signInPrompt('browse open play')}</div>`;
     return;
   }
+  if(opUI.error){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Couldn\u2019t load open play games right now.<br/>Check your connection and try again.</div></div>`;
+    return;
+  }
 
-  const events = opUI.events.filter(e => e.status === 'open');
+  const events = opUI.events.filter(function(e){ return e.status === 'open'; });
 
   el.innerHTML = `
     <div class="op-wrap">
@@ -167,6 +266,7 @@ function renderDiscoverView(el){
         </div>
         <button class="btn btn-primary btn-sm" data-action="tab" data-tab="host">+ Host</button>
       </div>
+      ${opUserChip()}
       ${events.length === 0 ? `
         <div class="op-empty">
           No open games posted yet.<br/>Be the first — tap <b>Host</b> to post one.
@@ -196,7 +296,7 @@ function opEventCard(ev){
 }
 
 async function opOpenEventDetail(eventId){
-  const ev = opUI.events.find(e => e.id === eventId);
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
   if(!ev) return;
   const myRsvp = await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id);
   const isHost = ev.host_id === opUI.user.id;
@@ -227,8 +327,12 @@ async function opOpenEventDetail(eventId){
 
 /* ---------------- HOST view ---------------- */
 function renderHostView(el){
+  if(!fbReady()){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Open Play isn\u2019t configured yet.<br/>Check the Firebase setup in firebase-init.js.</div></div>`;
+    return;
+  }
   if(opUI.loading){
-    el.innerHTML = `<div class="op-empty">Loading…</div>`;
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Loading\u2026</div></div>`;
     return;
   }
   if(!opUI.user){
@@ -236,7 +340,7 @@ function renderHostView(el){
     return;
   }
 
-  const myEvents = opUI.events.filter(e => e.host_id === opUI.user.id && e.status === 'open');
+  const myEvents = opUI.events.filter(function(e){ return e.host_id === opUI.user.id && e.status === 'open'; });
 
   el.innerHTML = `
     <div class="op-wrap">
@@ -246,6 +350,7 @@ function renderHostView(el){
           <div class="op-h-sub">Post an open play — others can discover and join</div>
         </div>
       </div>
+      ${opUserChip()}
 
       <form id="opHostForm" class="op-form">
         <label class="op-label">Title
@@ -278,7 +383,7 @@ function renderHostView(el){
             <input class="op-input" type="number" step="0.1" name="skill_max" placeholder="4.5" />
           </label>
         </div>
-        <button type="submit" class="btn btn-primary btn-block" data-action="op-noop">Post Open Play</button>
+        <button type="submit" class="btn btn-primary btn-block">Post Open Play</button>
       </form>
 
       ${myEvents.length ? `
@@ -292,6 +397,7 @@ function renderHostView(el){
   if(form){
     form.addEventListener('submit', async function(e){
       e.preventDefault();
+      const submitBtn = form.querySelector('button[type="submit"]');
       const fd = new FormData(form);
       const date = fd.get('date'), time = fd.get('time');
       if(!date || !time){ toast('Pick a date and time.', 'error'); return; }
@@ -305,12 +411,18 @@ function renderHostView(el){
         skill_min: fd.get('skill_min') ? Number(fd.get('skill_min')) : null,
         skill_max: fd.get('skill_max') ? Number(fd.get('skill_max')) : null,
       };
-      const ev = await OpenPlayAPI.createEvent(payload, opUI.user);
-      opUI.events = await OpenPlayAPI.listEvents();
-      toast('Open play posted!', 'success');
-      state.tab = 'discover';
-      saveAll(); renderAll();
-      setTimeout(() => opOpenEventDetail(ev.id), 200);
+      if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Posting\u2026'; }
+      try{
+        const ev = await OpenPlayAPI.createEvent(payload, opUI.user);
+        toast('Open play posted!', 'success');
+        state.tab = 'discover';
+        saveAll(); renderAll();
+        setTimeout(function(){ opOpenEventDetail(ev.id); }, 200);
+      }catch(err){
+        console.error(err);
+        toast('Could not post this event. Please try again.', 'error');
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'Post Open Play'; }
+      }
     });
   }
 }
@@ -324,11 +436,29 @@ document.addEventListener('click', async function(e){
 
   switch(action){
     case 'op-sign-in': {
-      const input = document.getElementById('opSignInName');
-      const name = input ? input.value.trim() : '';
-      if(!name){ toast('Enter a name to continue.', 'error'); return; }
-      opUI.user = await OpenPlayAPI.signIn(name);
-      toast(`Welcome, ${name}!`, 'success');
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        const user = await OpenPlayAPI.signInWithGoogle();
+        if(user){
+          toast(`Welcome, ${user.display_name}!`, 'success');
+          opUI.user = user;
+          renderActiveView();
+        }
+      }catch(err){
+        console.error(err);
+        const msg = (err && err.code === 'auth/popup-closed-by-user')
+          ? 'Sign-in was cancelled.'
+          : 'Sign-in failed. Please try again.';
+        toast(msg, 'error');
+      }finally{
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-sign-out': {
+      await OpenPlayAPI.signOut();
+      toast('Signed out.', 'default');
       renderActiveView();
       break;
     }
@@ -337,27 +467,39 @@ document.addEventListener('click', async function(e){
       break;
     }
     case 'op-join-event': {
-      await OpenPlayAPI.rsvp(t.dataset.id, opUI.user);
-      opUI.events = await OpenPlayAPI.listEvents();
-      toast("You're in! RSVP confirmed.", 'success');
-      closeModal();
-      renderActiveView();
+      try{
+        await OpenPlayAPI.rsvp(t.dataset.id, opUI.user);
+        toast("You're in! RSVP confirmed.", 'success');
+        closeModal();
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast(err && err.message ? err.message : 'Could not RSVP. Please try again.', 'error');
+      }
       break;
     }
     case 'op-leave-event': {
-      await OpenPlayAPI.cancelRsvp(t.dataset.id, opUI.user);
-      opUI.events = await OpenPlayAPI.listEvents();
-      toast('RSVP cancelled.', 'success');
-      closeModal();
-      renderActiveView();
+      try{
+        await OpenPlayAPI.cancelRsvp(t.dataset.id, opUI.user);
+        toast('RSVP cancelled.', 'success');
+        closeModal();
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast('Could not cancel RSVP. Please try again.', 'error');
+      }
       break;
     }
     case 'op-cancel-event': {
-      await OpenPlayAPI.cancelEvent(t.dataset.id);
-      opUI.events = await OpenPlayAPI.listEvents();
-      toast('Event cancelled.', 'success');
-      closeModal();
-      renderActiveView();
+      try{
+        await OpenPlayAPI.cancelEvent(t.dataset.id);
+        toast('Event cancelled.', 'success');
+        closeModal();
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast('Could not cancel this event. Please try again.', 'error');
+      }
       break;
     }
     case 'op-share-event': {
@@ -375,9 +517,6 @@ document.addEventListener('click', async function(e){
 
 /* ---------------- boot ---------------- */
 opAddNavSections();
-opBoot().then(() => {
-  // If the user is already sitting on Discover/Host when data finishes loading, re-render.
-  if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
-});
+opBoot();
 
 })();
