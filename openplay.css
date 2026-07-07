@@ -1,0 +1,63 @@
+/* ============================================================
+   OPEN PLAY / HOST A GAME — styles (uses existing design tokens)
+   ============================================================ */
+.op-wrap{ padding:14px 16px 90px; }
+
+.op-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.op-h-title{ font-size:20px; font-weight:800; color:var(--text); }
+.op-h-sub{ font-size:13px; color:var(--text-dim); margin-top:2px; }
+
+.op-empty{
+  color:var(--text-dim); font-size:14px; text-align:center;
+  padding:48px 20px; border:1px dashed var(--line); border-radius:var(--radius-lg);
+  background:var(--surface);
+}
+
+.op-event-list{ display:flex; flex-direction:column; gap:10px; }
+
+.op-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md);
+  padding:14px; cursor:pointer; transition:border-color .15s ease, transform .15s ease;
+}
+.op-card:active{ transform:scale(0.99); }
+.op-card:hover{ border-color:var(--court-dim); }
+
+.op-card-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.op-card-title{ font-size:15px; font-weight:700; color:var(--text); }
+
+.op-badge{ font-size:11px; font-weight:700; padding:3px 8px; border-radius:20px; white-space:nowrap; }
+.op-badge-open{ background:rgba(62,213,152,0.15); color:var(--win); }
+.op-badge-full{ background:rgba(255,107,107,0.15); color:var(--loss); }
+
+.op-card-row{ font-size:13px; color:var(--text-dim); margin-top:3px; }
+
+.op-signin-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg);
+  padding:20px; max-width:420px; margin:24px auto;
+}
+.op-signin-title{ font-size:16px; font-weight:800; color:var(--text); margin-bottom:4px; }
+.op-signin-sub{ font-size:12.5px; color:var(--text-dim); margin-bottom:14px; line-height:1.4; }
+
+.op-input{
+  width:100%; background:var(--surface-2); border:1px solid var(--line); color:var(--text);
+  border-radius:var(--radius-sm); padding:10px 12px; font-size:14px; margin-bottom:10px;
+  font-family:var(--font-ui);
+}
+.op-input:focus{ outline:none; border-color:var(--court); }
+
+.op-form{ display:flex; flex-direction:column; }
+.op-label{ font-size:12.5px; color:var(--text-dim); font-weight:600; display:block; margin-bottom:2px; flex:1; }
+.op-form-row{ display:flex; gap:10px; }
+.op-form-row .op-label{ min-width:0; }
+
+.op-detail-rows{ display:flex; flex-direction:column; gap:8px; margin:14px 0; }
+.op-detail-row{ font-size:14px; color:var(--text); display:flex; gap:8px; }
+.op-detail-row span{ color:var(--text-dim); }
+
+.op-detail-actions{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+
+.op-btn-danger{
+  background:transparent; color:var(--loss); border:1px solid var(--loss-dim);
+  border-radius:var(--radius-md); padding:12px; font-size:14px; font-weight:700; cursor:pointer;
+}
+.op-btn-danger:hover{ background:rgba(255,107,107,0.08); }
