@@ -110,7 +110,7 @@ const SESSION_PLAN_OPTIONS = [
 /* ============================================================
    STATE — loaded once at boot, persisted after every mutation
    ============================================================ */
-let state = {
+window.state = {
   players: [],
   matches: [],
   current: null,         // Rotation legacy single-court: { round, teamA:[id,id], teamB:[id,id] }
@@ -302,7 +302,7 @@ async function loadState(){
   }
 }
 
-function saveAll(){
+window.saveAll = function saveAll(){
   try{
     // Save state.current and state.currentGeneration under separate keys so a
     // mid-session matchMode change in Settings never silently drops one of them.
@@ -334,7 +334,7 @@ function saveAll(){
 /* ============================================================
    UTILITIES
    ============================================================ */
-function uid(prefix){ return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7); }
+window.uid = function uid(prefix){ return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7); }
 // Fisher-Yates shuffle — mutates and returns arr.
 function shuffleArray(arr){
   for(let i = arr.length - 1; i > 0; i--){
@@ -344,7 +344,7 @@ function shuffleArray(arr){
   return arr;
 }
 function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
-function esc(str){
+window.esc = function esc(str){
   return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function initials(name){
@@ -617,7 +617,7 @@ function speakSideOut(m){
 // near-identical messages (e.g. "No serve decision to undo." read as an error
 // because it contained "no ", while "Nothing to undo." did not) and could
 // misfire on any future wording change.
-function toast(msg, type){
+window.toast = function toast(msg, type){
   let root = document.getElementById('toast-root');
   if(!root){
     root = document.createElement('div');
@@ -672,7 +672,7 @@ function toast(msg, type){
   el._dismissTimer = setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateX(12px)'; el.style.transition='opacity .2s ease,transform .2s ease'; setTimeout(()=>el.remove(), 220); }, DURATION);
 }
 
-function closeModal(){
+window.closeModal = function closeModal(){
   const root = document.getElementById('modal-root');
   root.innerHTML = '';
 }
@@ -680,7 +680,7 @@ function closeModal(){
 // the modal. Pass false for modals that require an explicit answer (e.g.
 // the "Race to 2?" prompt) so an accidental outside tap can't silently
 // resolve the decision without the user actually choosing an option.
-function openModal(html, dismissible){
+window.openModal = function openModal(html, dismissible){
   if(dismissible === undefined) dismissible = true;
   const root = document.getElementById('modal-root');
   root.innerHTML = `<div class="modal-bg" id="modal-bg-inner">
@@ -5055,7 +5055,7 @@ async function openSessionHistoryModal(){
 }
 
 
-function renderAll(){
+window.renderAll = function renderAll(){
   updateDashStrip();
   updateCheckInBadge();
   renderTabsNav();
