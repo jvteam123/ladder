@@ -5178,7 +5178,7 @@ function nudgeTabsOnce(){
   setTimeout(()=>{ nav.scrollTo({left:0, behavior:'smooth'}); }, 1300);
 }
 
-function renderActiveView(){
+window.renderActiveView = function renderActiveView(){
   const target = document.getElementById('view');
   switch(state.tab){
     case 'match': renderMatchView(target); break;
