@@ -5105,7 +5105,7 @@ function updateDashStrip(){
 /* ============================================================
    NAVIGATION CONFIG — single source of truth for tab strip + nav menu
    ============================================================ */
-const NAV_SECTIONS = [
+window.NAV_SECTIONS = [
   { id: 'match', label: 'Match', desc: 'Live pairing & scoreboard', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12M12 6v12"/></svg>' },
   { id: 'queue', label: 'Queue', desc: "Who's up next on court", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>' },
   { id: 'players', label: 'Players', desc: 'Roster & active status', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>' },
