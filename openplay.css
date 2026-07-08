@@ -196,3 +196,16 @@
 .op-mini-btn-paid:hover{ background:rgba(62,213,152,0.25); }
 .op-mini-btn-unpaid{ background:rgba(255,193,7,0.15); color:#ffc107; }
 .op-mini-btn-unpaid:hover{ background:rgba(255,193,7,0.25); }
+
+/* On narrow screens a joiner row can carry several action buttons
+   (Confirm, Paid/Unpaid, Move to waitlist, Make/Remove sub host, Remove).
+   .op-joiner-actions has flex:none so it doesn't shrink, and the row
+   itself never wraps — past a certain button count they just overflow
+   off the edge of the screen instead of dropping to a new line. Let the
+   row wrap on mobile so the name sits on top and actions flow below it,
+   still wrapping among themselves via the existing flex-wrap:wrap. */
+@media (max-width:480px){
+  .op-joiner-row{ flex-wrap:wrap; row-gap:8px; }
+  .op-joiner-name{ flex:1 1 100%; white-space:normal; }
+  .op-joiner-actions{ flex:1 1 100%; justify-content:flex-start; }
+}
