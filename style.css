@@ -1968,53 +1968,6 @@ td.namecell { font-size: clamp(11.5px, 3vw, 13px); }
   .btn-primary { background: Highlight !important; color: HighlightText !important; }
 }
 
-/* ================================================================
-   SECURITY CSS — anti-screenshot, watermark overlay
-   ================================================================ */
-/* Subtle watermark via CSS only — visible on screenshot/print */
-body::after {
-  content: "© 2026 Renzku · Maezku Ladder · Unauthorized copy";
-  position: fixed;
-  bottom: 50%;
-  left: 50%;
-  transform: translate(-50%, 50%) rotate(-35deg);
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(215, 242, 61, 0.04);
-  pointer-events: none;
-  z-index: 9999;
-  white-space: nowrap;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  user-select: none;
-}
-/* Make watermark more visible on print */
-@media print {
-  body::after {
-    color: rgba(0,0,0,0.12) !important;
-    font-size: 22px !important;
-  }
-}
-/* DevTools warning overlay (shown via JS class) */
-#ml-devtools-warning {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(8,10,13,0.97);
-  z-index: 99999;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  text-align: center;
-  padding: 40px;
-  gap: 14px;
-  font-family: var(--font-ui);
-}
-#ml-devtools-warning.show { display: flex; }
-#ml-devtools-warning .dw-icon { font-size: 52px; }
-#ml-devtools-warning .dw-title { font-size: 22px; font-weight: 900; color: var(--ball); }
-#ml-devtools-warning .dw-msg { font-size: 14px; color: var(--text-dim); line-height: 1.6; max-width: 380px; }
-#ml-devtools-warning .dw-close { margin-top: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-dim); border-radius: 10px; padding: 10px 24px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
 /* Disable text selection on game elements */
 .scoreboard, .controlbar-inner, .brand-name, .brand-sub, .topbar {
   -webkit-user-select: none;
