@@ -335,6 +335,66 @@ function fmtWhen(iso){
 
 const GOOGLE_G_SVG = '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3c-7.7 0-14.4 4.4-17.7 10.7z"/><path fill="#4CAF50" d="M24 45c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 36.6 26.7 37.5 24 37.5c-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 40.5 16.2 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.8l6.2 5.2C39.4 37.5 45 32 45 24c0-1.4-.1-2.7-.4-3.5z"/></svg>';
 
+// Google blocks its sign-in flow (popup AND redirect) inside recognized
+// in-app browsers — the webviews Facebook, Instagram, Messenger, TikTok,
+// LinkedIn, Line, Snapchat, etc. open when someone taps a shared link
+// without leaving their app. Trying to sign in there just fails with
+// "This browser or app may not be secure". So: detect those webviews up
+// front and route the person to their real browser instead of attempting
+// (and failing) the Google popup.
+function opInAppBrowserInfo(){
+  const ua = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua) && !window.MSStream;
+  const KNOWN = [
+    { name: 'Facebook', re: /FBAN|FBAV|FB_IAB/i },
+    { name: 'Messenger', re: /MessengerForiOS/i },
+    { name: 'Instagram', re: /Instagram/i },
+    { name: 'TikTok', re: /BytedanceWebview|Tiktok|MusicalLite/i },
+    { name: 'LinkedIn', re: /LinkedInApp/i },
+    { name: 'Twitter\/X', re: /Twitter/i },
+    { name: 'Line', re: /\bLine\// },
+    { name: 'WeChat', re: /MicroMessenger/i },
+    { name: 'Snapchat', re: /Snapchat/i },
+  ];
+  let appName = null;
+  for(let i = 0; i < KNOWN.length; i++){ if(KNOWN[i].re.test(ua)){ appName = KNOWN[i].name; break; } }
+  return { isAndroid: isAndroid, isIOS: isIOS, appName: appName, isInApp: !!appName };
+}
+
+// Best-effort escape to the system default browser. Android's "intent://"
+// scheme reliably hands the URL to the phone's normal browser even from
+// inside a Chromium-based in-app webview. iOS gives web pages no reliable
+// way to force Safari open from inside another app's webview, so there we
+// try window.open() (works in some in-app browsers) and otherwise fall
+// back to "copy the link" + manual instructions.
+function opOpenInSystemBrowser(url, info){
+  info = info || opInAppBrowserInfo();
+  if(info.isAndroid){
+    const noScheme = url.replace(/^https?:\/\//, '');
+    window.location.href = 'intent://' + noScheme + '#Intent;scheme=https;action=android.intent.action.VIEW;end;';
+    return;
+  }
+  window.open(url, '_blank');
+}
+
+function opInAppBrowserPrompt(){
+  const info = opInAppBrowserInfo();
+  const url = location.href;
+  const iosNote = info.isIOS
+    ? ' If it doesn\u2019t open automatically, tap the ••• or share icon at the top of the screen and choose "Open in Safari" (or "Open in Browser").'
+    : '';
+  openModal(`
+    <div class="modal-title">Open in your browser to sign in</div>
+    <div class="modal-sub">Google sign-in doesn\u2019t work inside ${esc(info.appName || 'this app')}\u2019s built-in browser.${iosNote}</div>
+    <div class="modal-actions">
+      <button class="btn btn-primary btn-block" data-action="op-open-in-browser" data-url="${esc(url)}">Open in Browser</button>
+      <button class="btn btn-ghost btn-block" data-action="op-copy-current-link" data-url="${esc(url)}">Copy link instead</button>
+      <button class="btn btn-ghost btn-block" data-action="modal-close">Cancel</button>
+    </div>
+  `);
+}
+
 // Normalizes a host-entered location link so bare domains ("maps.app.goo.gl/xyz")
 // still work as a real href, not just full "https://..." URLs.
 function opNormalizeUrl(u){
@@ -768,6 +828,8 @@ document.addEventListener('click', async function(e){
   switch(action){
     case 'op-sign-in': {
       if(t.disabled) return;
+      const info = opInAppBrowserInfo();
+      if(info.isInApp){ opInAppBrowserPrompt(); return; }
       t.disabled = true;
       try{
         const user = await OpenPlayAPI.signInWithGoogle();
@@ -793,8 +855,23 @@ document.addEventListener('click', async function(e){
       renderActiveView();
       break;
     }
+    case 'op-open-in-browser': {
+      opOpenInSystemBrowser(t.dataset.url);
+      break;
+    }
+    case 'op-copy-current-link': {
+      try{
+        await navigator.clipboard.writeText(t.dataset.url);
+        toast('Link copied — paste it into your browser app.', 'success');
+      }catch(err){
+        toast(t.dataset.url, 'default');
+      }
+      break;
+    }
     case 'op-sign-in-to-join': {
       if(t.disabled) return;
+      const info = opInAppBrowserInfo();
+      if(info.isInApp){ opInAppBrowserPrompt(); return; }
       t.disabled = true;
       const eventId = t.dataset.id;
       try{
