@@ -171,6 +171,7 @@
 }
 .op-status-confirmed{ background:rgba(62,213,152,0.12); color:var(--win); }
 .op-status-waitlist{ background:rgba(255,193,7,0.12); color:#ffc107; }
+.op-status-ended{ background:var(--surface-2); color:var(--text-dim); }
 
 .op-badge-muted{ background:var(--surface-2); color:var(--text-dim); }
 .op-badge-leave{ background:rgba(255,107,107,0.15); color:var(--loss); }
