@@ -439,11 +439,12 @@ async function opCleanupOldPastEvents(){
   if(!opUI.user || !opUI.eventsReady) return false;
   if(opCleanupDoneFor === opUI.user.id) return false; // already checked this session
   opCleanupDoneFor = opUI.user.id;
-  const now = Date.now();
+  // Use the same time-based "ended" definition as the Host view's Past
+  // games list (opIsEnded, which respects end_time) so a game in progress
+  // isn't pruned as if it were already over.
   const past = opUI.events.filter(function(e){
     if(e.host_id !== opUI.user.id) return false;
-    const t = e.start_time ? new Date(e.start_time).getTime() : 0;
-    return !!t && t < now;
+    return opIsEnded(e);
   });
   past.sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); }); // newest first
   const toDelete = past.slice(MAX_PAST_EVENTS_PER_HOST);
@@ -996,7 +997,11 @@ function renderDiscoverView(el){
     return;
   }
 
-  const allOpen = opUI.events.filter(function(e){ return e.status === 'open'; });
+  // status === 'open' just means the host hasn't cancelled it — it stays
+  // 'open' forever unless they do, so we also need to check the time-based
+  // opIsEnded() here or games whose end time has already passed would keep
+  // showing up in Discover indefinitely.
+  const allOpen = opUI.events.filter(function(e){ return e.status === 'open' && !opIsEnded(e); });
   const events = allOpen
     .filter(function(e){ return opMatchesDiscoverFilter(e, opUI.discoverFilter); })
     .sort(function(a, b){ return new Date(a.start_time || 0) - new Date(b.start_time || 0); });
@@ -1064,13 +1069,16 @@ async function opOpenEventDetail(eventId){
   const isHost = !!opUI.user && ev.host_id === opUI.user.id;
   const isSubHost = !!opUI.user && !isHost && ev.sub_host_id === opUI.user.id;
   const full = opIsFull(ev);
+  const ended = opIsEnded(ev);
 
   let actionButton;
   if(isHost){
     actionButton = `
       <button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${ev.id}">Manage Participants</button>
       <button class="btn btn-ghost" data-action="op-edit-event" data-id="${ev.id}">Edit event</button>
-      <button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
+      ${ended
+        ? `<button class="op-btn-danger" data-action="op-confirm-delete-event" data-id="${ev.id}">Delete this event</button>`
+        : `<button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`}`;
   } else if(myRsvp && myRsvp.leave_requested){
     actionButton = `
       <div class="op-status-note op-status-waitlist">Leave request sent — waiting for the host to confirm.</div>
@@ -1083,6 +1091,9 @@ async function opOpenEventDetail(eventId){
     actionButton = `
       <div class="op-status-note op-status-confirmed">You're in ✓ · ${myRsvp.paid ? 'Paid' : 'Unpaid'}</div>
       <button class="btn btn-ghost" data-action="op-request-leave" data-id="${ev.id}">Request to leave</button>`;
+  } else if(ended){
+    // Game's already over — joining/waitlisting no longer makes sense.
+    actionButton = `<div class="op-status-note op-status-ended">This game has ended.</div>`;
   } else if(!opUI.user){
     actionButton = `<button class="btn btn-primary" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
   } else {
@@ -1385,6 +1396,25 @@ function opConfirmCancelEvent(eventId){
   `);
 }
 
+// Past/ended events can't be "cancelled" (there's nothing left to cancel —
+// the game already happened), so the host gets a straightforward delete
+// instead. This permanently removes the event and its rsvps, same as the
+// auto-cleanup uses (see OpenPlayAPI.deleteEvent).
+function opConfirmDeleteEvent(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev) return;
+  openModal(`
+    <div class="modal-title">Delete "${esc(ev.title)}"?</div>
+    <div class="modal-sub" style="line-height:1.6;">
+      This game has already ended. Deleting it removes it — and its RSVP history — for good. This can't be undone.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-action="op-open-event" data-id="${ev.id}">Never mind</button>
+      <button class="op-btn-danger" data-action="op-delete-event" data-id="${ev.id}">Yes, delete</button>
+    </div>
+  `);
+}
+
 /* ---------------- HOST view ---------------- */
 // True once the host has typed/changed anything in the in-progress "Host a
 // Game" form. Firestore's subscribeEvents() listener can fire — and call
@@ -1467,11 +1497,17 @@ function renderHostView(el){
   // call this same function again on every render, in an endless loop.
   opCleanupOldPastEvents().then(function(deletedAny){ if(deletedAny) maybeRerenderOpenPlay(); });
 
-  const now = Date.now();
   const mine = opUI.events.filter(function(e){ return e.host_id === opUI.user.id; });
-  const myOpenEvents = mine.filter(function(e){ return e.status === 'open'; });
+  // status === 'open' only reflects whether the host has cancelled the
+  // event — it never flips on its own once the event's time has passed.
+  // Splitting purely on status (as this used to) meant an open event whose
+  // end time had passed showed up in BOTH "Your posted games" (status still
+  // 'open') and "Past games" (start_time < now) at once. Using the
+  // time-based opIsEnded() for both sides keeps the two lists mutually
+  // exclusive and stops ended games from still counting as "posted".
+  const myOpenEvents = mine.filter(function(e){ return e.status === 'open' && !opIsEnded(e); });
   const myPastEvents = mine
-    .filter(function(e){ const t = e.start_time ? new Date(e.start_time).getTime() : 0; return !!t && t < now; })
+    .filter(function(e){ return opIsEnded(e); })
     .sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); })
     .slice(0, MAX_PAST_EVENTS_PER_HOST);
   const atOpenLimit = myOpenEvents.length >= MAX_OPEN_EVENTS_PER_HOST;
@@ -1804,6 +1840,25 @@ document.addEventListener('click', async function(e){
       }catch(err){
         console.error(err);
         toast('Could not cancel this event. Please try again.', 'error');
+      }
+      break;
+    }
+    case 'op-confirm-delete-event': {
+      opConfirmDeleteEvent(t.dataset.id);
+      break;
+    }
+    case 'op-delete-event': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.deleteEvent(t.dataset.id);
+        toast('Event deleted.', 'success');
+        closeModal();
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast('Could not delete this event. Please try again.', 'error');
+        t.disabled = false;
       }
       break;
     }
