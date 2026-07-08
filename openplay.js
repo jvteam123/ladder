@@ -118,36 +118,33 @@ const OpenPlayAPI = {
     });
     return rows;
   },
-  // Joins the event. If it's full, the player is placed on the waitlist
-  // instead (like Reclub) rather than being turned away outright. Returns
-  // the resulting status: 'confirmed' or 'waitlist'.
+  // Joins the event. Every new joiner lands on the waitlist first, no
+  // matter how many open spots there are — the host has to confirm each
+  // one from "Manage joiners" before they hold a real seat. Returns the
+  // resulting status: 'confirmed' (already were, e.g. a re-tap) or 'waitlist'.
   async rsvp(eventId, user){
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, user.id));
-    let resultStatus = 'confirmed';
+    let resultStatus = 'waitlist';
     await window.fbDb.runTransaction(async function(tx){
       const eventSnap = await tx.get(eventRef);
       if(!eventSnap.exists) throw new Error('This event no longer exists.');
-      const ev = eventSnap.data();
       const rsvpSnap = await tx.get(rsvpRef);
       const existing = rsvpSnap.exists ? rsvpSnap.data() : null;
       if(existing && (existing.status === 'confirmed' || existing.status === 'waitlist')){
         resultStatus = existing.status;
         return;
       }
-      const isFull = ev.max_players && (ev.rsvp_count || 0) >= ev.max_players;
-      resultStatus = isFull ? 'waitlist' : 'confirmed';
+      resultStatus = 'waitlist';
       tx.set(rsvpRef, {
         event_id: eventId,
         player_id: user.id,
         player_name: user.display_name,
         player_photo_url: user.avatar_url || null,
         status: resultStatus,
+        paid: false,
         created_at: (existing && existing.created_at) ? existing.created_at : firebase.firestore.FieldValue.serverTimestamp(),
       });
-      if(resultStatus === 'confirmed'){
-        tx.update(eventRef, { rsvp_count: (ev.rsvp_count || 0) + 1 });
-      }
     });
     return resultStatus;
   },
@@ -171,20 +168,43 @@ const OpenPlayAPI = {
       const ev = eventSnap.data();
       const rsvpSnap = await tx.get(rsvpRef);
       if(!rsvpSnap.exists || rsvpSnap.data().status !== 'waitlist') return;
-      if(ev.max_players && (ev.rsvp_count || 0) >= ev.max_players){
-        throw new Error('Event is full — remove a player first.');
+      // The host occupies one of the max_players slots too, so a joiner
+      // can only be confirmed while (confirmed joiners + host) < max.
+      if(ev.max_players && ((ev.rsvp_count || 0) + 1) >= ev.max_players){
+        throw new Error('Event is full — remove a player or move one to the waitlist first.');
       }
       tx.update(rsvpRef, { status: 'confirmed' });
       tx.update(eventRef, { rsvp_count: (ev.rsvp_count || 0) + 1 });
     });
   },
-  // Shared helper: marks a joiner's rsvp as cancelled/removed, frees their
-  // seat if they held a confirmed spot, then bumps the next waitlisted
-  // player into it automatically (like Reclub).
+  // Host moves a confirmed joiner back to the waitlist — e.g. to free a
+  // seat for someone else, or because the joiner hasn't paid. This does
+  // NOT auto-promote anyone; the host confirms whoever they choose next.
+  async moveToWaitlist(eventId, playerId){
+    const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
+    await window.fbDb.runTransaction(async function(tx){
+      const rsvpSnap = await tx.get(rsvpRef);
+      const eventSnap = await tx.get(eventRef);
+      if(!rsvpSnap.exists || rsvpSnap.data().status !== 'confirmed') return;
+      tx.update(rsvpRef, { status: 'waitlist' });
+      if(eventSnap.exists){
+        const ev = eventSnap.data();
+        tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
+      }
+    });
+  },
+  // Host toggles a joiner's payment status. Every joiner starts unpaid.
+  async markPaid(eventId, playerId, paid){
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
+    await rsvpRef.update({ paid: !!paid });
+  },
+  // Shared helper: marks a joiner's rsvp as cancelled/removed, and frees
+  // their seat if they held a confirmed spot. No one is auto-promoted from
+  // the waitlist into that freed seat — the host confirms who's next.
   async _releaseSpot(eventId, playerId, newStatus){
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
-    let freedSeat = false;
     await window.fbDb.runTransaction(async function(tx){
       // Firestore transactions require ALL reads before ANY writes, so both
       // gets happen up front regardless of which branch below needs them.
@@ -193,32 +213,12 @@ const OpenPlayAPI = {
       if(!rsvpSnap.exists) return;
       const cur = rsvpSnap.data();
       if(cur.status !== 'confirmed' && cur.status !== 'waitlist') return;
-      freedSeat = cur.status === 'confirmed';
+      const freedSeat = cur.status === 'confirmed';
       tx.update(rsvpRef, { status: newStatus });
       if(freedSeat && eventSnap.exists){
         const ev = eventSnap.data();
         tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
       }
-    });
-    if(freedSeat) await OpenPlayAPI._promoteNextFromWaitlist(eventId);
-  },
-  // Bumps the longest-waiting waitlisted player into a newly-freed seat.
-  async _promoteNextFromWaitlist(eventId){
-    const rows = await OpenPlayAPI.listRsvpsForEvent(eventId);
-    const waitlisted = rows.filter(function(r){ return r.status === 'waitlist'; });
-    if(!waitlisted.length) return;
-    const next = waitlisted[0];
-    const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
-    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(next.id);
-    await window.fbDb.runTransaction(async function(tx){
-      const eventSnap = await tx.get(eventRef);
-      if(!eventSnap.exists) return;
-      const ev = eventSnap.data();
-      if(ev.max_players && (ev.rsvp_count || 0) >= ev.max_players) return;
-      const rsvpSnap = await tx.get(rsvpRef);
-      if(!rsvpSnap.exists || rsvpSnap.data().status !== 'waitlist') return;
-      tx.update(rsvpRef, { status: 'confirmed' });
-      tx.update(eventRef, { rsvp_count: (ev.rsvp_count || 0) + 1 });
     });
   }
 };
@@ -305,6 +305,13 @@ window.renderActiveView = function(){
 };
 
 /* ---------------- shared bits ---------------- */
+// The host always occupies one of the max_players slots (they're playing
+// too), so "filled" = confirmed joiners + 1, and a max_players of 8 really
+// only leaves 7 spots open to joiners.
+function opFilledCount(ev){ return (ev.rsvp_count || 0) + 1; }
+function opIsFull(ev){ return !!ev.max_players && opFilledCount(ev) >= ev.max_players; }
+function opAvailable(ev){ return ev.max_players ? Math.max(0, ev.max_players - opFilledCount(ev)) : null; }
+
 function fmtWhen(iso){
   if(!iso) return '';
   const d = new Date(iso);
@@ -418,7 +425,7 @@ function renderDiscoverView(el){
 }
 
 function opEventCard(ev){
-  const full = ev.max_players && ev.rsvp_count >= ev.max_players;
+  const full = opIsFull(ev);
   return `
     <div class="op-card" data-action="op-open-event" data-id="${ev.id}">
       <div class="op-card-top">
@@ -427,7 +434,7 @@ function opEventCard(ev){
       </div>
       <div class="op-card-row">📍 ${opLocationLinkHtml(ev, esc(ev.location_name))}</div>
       <div class="op-card-row">🗓️ ${fmtWhen(ev.start_time)}</div>
-      <div class="op-card-row">👥 ${ev.rsvp_count || 0}${ev.max_players ? ' / ' + ev.max_players : ''} players · hosted by ${esc(ev.host_name)}</div>
+      <div class="op-card-row">👥 ${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players (incl. host) · hosted by ${esc(ev.host_name)}</div>
     </div>
   `;
 }
@@ -437,7 +444,7 @@ async function opOpenEventDetail(eventId){
   if(!ev) return;
   const myRsvp = opUI.user ? await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id) : null;
   const isHost = !!opUI.user && ev.host_id === opUI.user.id;
-  const full = ev.max_players && (ev.rsvp_count || 0) >= ev.max_players;
+  const full = opIsFull(ev);
 
   let actionButton;
   if(isHost){
@@ -446,16 +453,16 @@ async function opOpenEventDetail(eventId){
       <button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
   } else if(myRsvp && myRsvp.status === 'waitlist'){
     actionButton = `
-      <div class="op-status-note op-status-waitlist">You're on the waitlist — you'll be confirmed automatically if a spot opens up.</div>
+      <div class="op-status-note op-status-waitlist">You're on the waitlist — the host still needs to confirm you.</div>
       <button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave waitlist</button>`;
   } else if(myRsvp){
     actionButton = `
-      <div class="op-status-note op-status-confirmed">You're in ✓</div>
+      <div class="op-status-note op-status-confirmed">You're in ✓ · ${myRsvp.paid ? 'Paid' : 'Unpaid'}</div>
       <button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave / Cancel RSVP</button>`;
   } else if(!opUI.user){
-    actionButton = `<button class="btn btn-primary btn-block" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Join'}</button>`;
+    actionButton = `<button class="btn btn-primary btn-block" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
   } else {
-    actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Join'}</button>`;
+    actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
   }
 
   openModal(`
@@ -464,7 +471,7 @@ async function opOpenEventDetail(eventId){
     <div class="op-detail-rows">
       <div class="op-detail-row">📍 ${opLocationLinkHtml(ev, `<span>${esc(ev.location_name)}</span>`)}</div>
       <div class="op-detail-row">🗓️ <span>${fmtWhen(ev.start_time)}</span></div>
-      <div class="op-detail-row">👥 <span>${ev.rsvp_count || 0}${ev.max_players ? ' / ' + ev.max_players : ''} players${full ? ' · waitlist open' : ''}</span></div>
+      <div class="op-detail-row">👥 <span>${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players (incl. host)${full ? ' · waitlist open' : ''}</span></div>
       ${(ev.skill_min || ev.skill_max) ? `<div class="op-detail-row">🎯 <span>Rating ${ev.skill_min || '—'}–${ev.skill_max || '—'}</span></div>` : ''}
       ${ev.fee_amount ? `<div class="op-detail-row">💵 <span>${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</span></div>` : ''}
     </div>
@@ -500,12 +507,15 @@ async function opRenderManageJoiners(eventId){
     const avatar = r.player_photo_url
       ? `<img class="op-user-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
       : `<div class="op-user-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
+    const isPaid = !!r.paid;
     return `
       <div class="op-joiner-row">
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
         <div class="op-joiner-actions">
+          ${opts.showPaid ? `<button class="op-mini-btn ${isPaid ? 'op-mini-btn-paid' : 'op-mini-btn-unpaid'}" data-action="op-toggle-paid" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-paid="${isPaid ? '1' : '0'}">${isPaid ? 'Paid' : 'Unpaid'}</button>` : ''}
           ${opts.confirmable ? `<button class="op-mini-btn op-mini-btn-primary" data-action="op-confirm-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}">Confirm</button>` : ''}
+          ${opts.moveToWaitlist ? `<button class="op-mini-btn op-mini-btn-ghost" data-action="op-move-to-waitlist" data-id="${ev.id}" data-player="${esc(r.player_id)}">Move to waitlist</button>` : ''}
           ${opts.removable ? `<button class="op-mini-btn op-mini-btn-danger" data-action="op-confirm-remove-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-name="${esc(r.player_name || 'this player')}">Remove</button>` : ''}
           ${opts.tag ? `<span class="op-badge op-badge-muted">${opts.tag}</span>` : ''}
         </div>
@@ -516,11 +526,15 @@ async function opRenderManageJoiners(eventId){
     <div class="modal-title">Manage joiners</div>
     <div class="modal-sub">${esc(ev.title)}</div>
 
-    <div class="op-h-title" style="font-size:14px; margin-top:14px;">Confirmed (${confirmed.length}${ev.max_players ? ' / ' + ev.max_players : ''})</div>
-    ${confirmed.length ? `<div class="op-joiner-list">${confirmed.map(function(r){ return joinerRow(r, { removable: true }); }).join('')}</div>` : `<div class="op-empty" style="padding:16px;">No one has joined yet.</div>`}
+    <div class="op-h-title" style="font-size:14px; margin-top:14px;">Waitlist — pending confirmation (${waitlist.length})</div>
+    ${waitlist.length ? `<div class="op-joiner-list">${waitlist.map(function(r){ return joinerRow(r, { confirmable: true, removable: true, showPaid: true }); }).join('')}</div>` : `<div class="op-empty" style="padding:16px;">No one is waiting to be confirmed.</div>`}
 
-    <div class="op-h-title" style="font-size:14px; margin-top:18px;">Waitlist (${waitlist.length})</div>
-    ${waitlist.length ? `<div class="op-joiner-list">${waitlist.map(function(r){ return joinerRow(r, { confirmable: true, removable: true }); }).join('')}</div>` : `<div class="op-empty" style="padding:16px;">No one is waitlisted.</div>`}
+    <div class="op-h-title" style="font-size:14px; margin-top:18px;">Confirmed (${confirmed.length + 1}${ev.max_players ? ' / ' + ev.max_players : ''} — host included)</div>
+    <div class="op-joiner-list">
+      ${joinerRow({ player_name: (ev.host_name || 'Host') + ' (Host)', player_photo_url: ev.host_photo_url }, { tag: 'Host' })}
+      ${confirmed.map(function(r){ return joinerRow(r, { removable: true, moveToWaitlist: true, showPaid: true }); }).join('')}
+    </div>
+    ${confirmed.length === 0 ? `<div class="op-empty" style="padding:16px;">No one else has been confirmed yet.</div>` : ''}
 
     ${removed.length ? `
       <div class="op-h-title" style="font-size:14px; margin-top:18px;">Removed / cancelled</div>
@@ -536,7 +550,7 @@ async function opRenderManageJoiners(eventId){
 function opConfirmRemoveJoiner(eventId, playerId, playerName){
   openModal(`
     <div class="modal-title">Remove ${esc(playerName)}?</div>
-    <div class="modal-sub">They'll lose their spot. If someone is on the waitlist, they'll be confirmed automatically.</div>
+    <div class="modal-sub">They'll lose their spot. No one is added automatically — confirm someone from the waitlist to fill it.</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${eventId}">Never mind</button>
       <button class="op-btn-danger" data-action="op-remove-joiner" data-id="${eventId}" data-player="${esc(playerId)}">Yes, remove</button>
@@ -608,7 +622,7 @@ function renderHostView(el){
           </label>
         </div>
         <div class="op-form-row">
-          <label class="op-label">Max players
+          <label class="op-label">Max players (includes you as host)
             <input class="op-input" type="number" name="max_players" min="2" max="64" value="8" />
           </label>
           <label class="op-label">Fee (optional)
@@ -742,7 +756,7 @@ document.addEventListener('click', async function(e){
       t.disabled = true;
       try{
         const status = await OpenPlayAPI.rsvp(t.dataset.id, opUI.user);
-        toast(status === 'waitlist' ? "Event's full — you're on the waitlist." : "You're in! RSVP confirmed.", 'success');
+        toast(status === 'confirmed' ? "You're in! RSVP confirmed." : "Request sent — the host will confirm your spot.", 'success');
         closeModal();
         renderActiveView();
       }catch(err){
@@ -815,6 +829,36 @@ document.addEventListener('click', async function(e){
       }catch(err){
         console.error(err);
         toast(opFriendlyError(err, 'Could not remove this joiner.'), 'error');
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-move-to-waitlist': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.moveToWaitlist(t.dataset.id, t.dataset.player);
+        toast('Moved to waitlist.', 'success');
+        await opRenderManageJoiners(t.dataset.id);
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast(opFriendlyError(err, 'Could not move this joiner to the waitlist.'), 'error');
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-toggle-paid': {
+      if(t.disabled) return;
+      t.disabled = true;
+      const nextPaid = t.dataset.paid !== '1';
+      try{
+        await OpenPlayAPI.markPaid(t.dataset.id, t.dataset.player, nextPaid);
+        toast(nextPaid ? 'Marked as paid.' : 'Marked as unpaid.', 'success');
+        await opRenderManageJoiners(t.dataset.id);
+      }catch(err){
+        console.error(err);
+        toast(opFriendlyError(err, 'Could not update payment status.'), 'error');
         t.disabled = false;
       }
       break;
