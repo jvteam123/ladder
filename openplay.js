@@ -455,6 +455,14 @@ function maybeRerenderOpenPlay(){
   if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
 }
 
+// Nothing in Firestore changes when an event's start_time simply arrives —
+// there's no write, no onSnapshot event, nothing to trigger a rerender.
+// Without this, the Open -> Happening flip (and Happening -> back to normal
+// once the assumed duration passes) would only ever show up after some
+// unrelated rerender happened to fire. Poll once a minute instead so the
+// Discover badges stay accurate on their own while the tab is open.
+setInterval(function(){ maybeRerenderOpenPlay(); }, 60 * 1000);
+
 function opHandleSharedLink(){
   if(opUI._sharedLinkHandled) return;
   const m = (location.hash || '').match(/open-play=([^&]+)/);
@@ -581,6 +589,49 @@ function opHostCountsTowardMax(ev){ return ev.host_counts_toward_max !== false; 
 function opFilledCount(ev){ return (ev.rsvp_count || 0) + (opHostCountsTowardMax(ev) ? 1 : 0); }
 function opIsFull(ev){ return !!ev.max_players && opFilledCount(ev) >= ev.max_players; }
 function opAvailable(ev){ return ev.max_players ? Math.max(0, ev.max_players - opFilledCount(ev)) : null; }
+
+// Events now capture a real end_time from the host (see the Host/Edit
+// forms), but older events created before that field existed only have
+// start_time — for those we fall back to the old assumed-duration guess
+// so they don't just show as permanently "Happening".
+const OP_ASSUMED_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours, legacy fallback only
+function opEndTimeMs(ev){
+  if(ev.end_time){
+    const end = new Date(ev.end_time).getTime();
+    if(!isNaN(end)) return end;
+  }
+  const start = ev.start_time ? new Date(ev.start_time).getTime() : NaN;
+  return isNaN(start) ? NaN : start + OP_ASSUMED_DURATION_MS;
+}
+function opIsHappeningNow(ev){
+  if(!ev.start_time) return false;
+  const start = new Date(ev.start_time).getTime();
+  if(isNaN(start)) return false;
+  const end = opEndTimeMs(ev);
+  const now = Date.now();
+  return now >= start && now < end;
+}
+function opIsEnded(ev){
+  if(!ev.start_time) return false;
+  const end = opEndTimeMs(ev);
+  if(isNaN(end)) return false;
+  return Date.now() >= end;
+}
+// Single source of truth for the four-state status badge: Happening and
+// Ended are time-based and take priority over the capacity-based Open/Full,
+// since "is it on right now / already over" is more relevant in the moment
+// than whether there's still room.
+function opEventStatus(ev){
+  if(opIsHappeningNow(ev)) return 'happening';
+  if(opIsEnded(ev)) return 'ended';
+  return opIsFull(ev) ? 'full' : 'open';
+}
+const OP_STATUS_BADGES = {
+  open:      '<span class="op-badge op-badge-open">Open</span>',
+  full:      '<span class="op-badge op-badge-full">Full</span>',
+  happening: '<span class="op-badge op-badge-happening">Happening</span>',
+  ended:     '<span class="op-badge op-badge-ended">Ended</span>'
+};
 // Label for the "Confirmed (...)" header on Manage joiners / Participants.
 // confirmedCount is the number of non-host confirmed joiners; the host is
 // always shown as playing regardless of whether they count toward the cap.
@@ -598,6 +649,16 @@ function fmtWhen(iso){
   if(isNaN(d)) return iso;
   return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' }) +
     ' · ' + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+}
+// Same as fmtWhen but appends the end time too, when the event has one:
+// "Sat, Jul 12 · 6:00 PM – 8:00 PM". Falls back to fmtWhen for older events
+// that only have a start_time.
+function fmtWhenRange(ev){
+  const start = fmtWhen(ev.start_time);
+  if(!ev.end_time) return start;
+  const endD = new Date(ev.end_time);
+  if(isNaN(endD)) return start;
+  return start + ' – ' + endD.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
 }
 
 /* ---------------- Discover: date/time filter (Reclub-style) ---------------- */
@@ -968,16 +1029,16 @@ function renderDiscoverView(el){
 }
 
 function opEventCard(ev){
-  const full = opIsFull(ev);
+  const badge = OP_STATUS_BADGES[opEventStatus(ev)];
   return `
     <div class="op-card" data-action="op-open-event" data-id="${ev.id}">
       <div class="op-card-top">
         <div class="op-card-title">${esc(ev.title)}</div>
-        ${full ? '<span class="op-badge op-badge-full">Full</span>' : '<span class="op-badge op-badge-open">Open</span>'}
+        ${badge}
       </div>
       <div class="op-card-row">📍 ${opLocationLinkHtml(ev, esc(ev.location_name))}</div>
-      <div class="op-card-row">🗓️ ${fmtWhen(ev.start_time)}</div>
-      <div class="op-card-row">👥 ${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players${opHostCountsTowardMax(ev) ? ' (incl. host)' : ''} · hosted by ${esc(ev.host_name)}</div>
+      <div class="op-card-row">🗓️ ${fmtWhenRange(ev)}</div>
+      <div class="op-card-row">👥 ${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players${opHostCountsTowardMax(ev) ? ' (incl. host)' : ''}</div>
       ${ev.fee_amount ? `<div class="op-card-row">💵 ${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</div>` : ''}
     </div>
   `;
@@ -1026,7 +1087,7 @@ async function opOpenEventDetail(eventId){
     <div class="modal-sub">Hosted by ${esc(ev.host_name)}</div>
     <div class="op-detail-rows">
       <div class="op-detail-row">📍 ${opLocationLinkHtml(ev, `<span>${esc(ev.location_name)}</span>`)}</div>
-      <div class="op-detail-row">🗓️ <span>${fmtWhen(ev.start_time)}</span></div>
+      <div class="op-detail-row">🗓️ <span>${fmtWhenRange(ev)}</span></div>
       <div class="op-detail-row">👥 <span>${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players${opHostCountsTowardMax(ev) ? ' (incl. host)' : ''}${full ? ' · waitlist open' : ''}</span></div>
       ${(ev.skill_min || ev.skill_max) ? `<div class="op-detail-row">🎯 <span>Rating ${ev.skill_min || '—'}–${ev.skill_max || '—'}</span></div>` : ''}
       ${ev.fee_amount ? `<div class="op-detail-row">💵 <span>${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</span></div>` : ''}
@@ -1099,6 +1160,8 @@ function opRenderEditEvent(eventId){
   const d = ev.start_time ? new Date(ev.start_time) : null;
   const dateVal = (d && !isNaN(d)) ? d.toISOString().slice(0, 10) : '';
   const timeVal = (d && !isNaN(d)) ? (String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')) : '';
+  const endD = ev.end_time ? new Date(ev.end_time) : null;
+  const endTimeVal = (endD && !isNaN(endD)) ? (String(endD.getHours()).padStart(2,'0') + ':' + String(endD.getMinutes()).padStart(2,'0')) : '';
 
   openModal(`
     <div class="modal-title">Edit event</div>
@@ -1116,8 +1179,13 @@ function opRenderEditEvent(eventId){
         <label class="op-label">Date
           <input class="op-input" type="date" name="date" value="${esc(dateVal)}" required />
         </label>
-        <label class="op-label">Time
+        <label class="op-label">Start time
           <input class="op-input" type="time" name="time" value="${esc(timeVal)}" required />
+        </label>
+      </div>
+      <div class="op-form-row">
+        <label class="op-label">End time
+          <input class="op-input" type="time" name="end_time" value="${esc(endTimeVal)}" required />
         </label>
       </div>
       <div class="op-form-row">
@@ -1159,14 +1227,25 @@ function opRenderEditEvent(eventId){
       e.preventDefault();
       const submitBtn = form.querySelector('button[type="submit"]');
       const fd = new FormData(form);
-      const date = fd.get('date'), time = fd.get('time');
+      const date = fd.get('date'), time = fd.get('time'), endTime = fd.get('end_time');
       if(!date || !time){ toast('Pick a date and time.', 'error'); return; }
+      if(!endTime){ toast('Pick an end time.', 'error'); return; }
       const start_time = new Date(`${date}T${time}`).toISOString();
+      let end_time = new Date(`${date}T${endTime}`).toISOString();
+      // An end time earlier than the start time almost always means the
+      // game runs past midnight (e.g. 10:00 PM \u2013 12:30 AM) rather than a
+      // mistake, so roll it over to the next day instead of rejecting it.
+      if(new Date(end_time) <= new Date(start_time)){
+        const nextDay = new Date(`${date}T${endTime}`);
+        nextDay.setDate(nextDay.getDate() + 1);
+        end_time = nextDay.toISOString();
+      }
       const payload = {
         title: (fd.get('title') || '').trim() || 'Open Play',
         location_name: (fd.get('location_name') || '').trim(),
         location_link: (fd.get('location_link') || '').trim() || null,
         start_time: start_time,
+        end_time: end_time,
         max_players: Number(fd.get('max_players')) || null,
         fee_amount: (fd.get('fee_amount') || '').trim() || null,
         host_counts_toward_max: fd.get('host_counts_toward_max') === 'on',
@@ -1353,8 +1432,13 @@ function renderHostView(el){
             <label class="op-label">Date
               <input class="op-input" type="date" name="date" required />
             </label>
-            <label class="op-label">Time
+            <label class="op-label">Start time
               <input class="op-input" type="time" name="time" required />
+            </label>
+          </div>
+          <div class="op-form-row">
+            <label class="op-label">End time
+              <input class="op-input" type="time" name="end_time" required />
             </label>
           </div>
           <div class="op-form-row">
@@ -1412,14 +1496,25 @@ function renderHostView(el){
         return;
       }
       const fd = new FormData(form);
-      const date = fd.get('date'), time = fd.get('time');
+      const date = fd.get('date'), time = fd.get('time'), endTime = fd.get('end_time');
       if(!date || !time){ toast('Pick a date and time.', 'error'); return; }
+      if(!endTime){ toast('Pick an end time.', 'error'); return; }
       const start_time = new Date(`${date}T${time}`).toISOString();
+      let end_time = new Date(`${date}T${endTime}`).toISOString();
+      // An end time earlier than the start time almost always means the
+      // game runs past midnight (e.g. 10:00 PM \u2013 12:30 AM) rather than a
+      // mistake, so roll it over to the next day instead of rejecting it.
+      if(new Date(end_time) <= new Date(start_time)){
+        const nextDay = new Date(`${date}T${endTime}`);
+        nextDay.setDate(nextDay.getDate() + 1);
+        end_time = nextDay.toISOString();
+      }
       const payload = {
         title: (fd.get('title') || '').trim() || 'Open Play',
         location_name: (fd.get('location_name') || '').trim(),
         location_link: (fd.get('location_link') || '').trim() || null,
         start_time,
+        end_time,
         max_players: Number(fd.get('max_players')) || null,
         fee_amount: (fd.get('fee_amount') || '').trim() || null,
         host_counts_toward_max: fd.get('host_counts_toward_max') === 'on',
