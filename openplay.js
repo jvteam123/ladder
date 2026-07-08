@@ -186,18 +186,18 @@ const OpenPlayAPI = {
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
     let freedSeat = false;
     await window.fbDb.runTransaction(async function(tx){
+      // Firestore transactions require ALL reads before ANY writes, so both
+      // gets happen up front regardless of which branch below needs them.
       const rsvpSnap = await tx.get(rsvpRef);
+      const eventSnap = await tx.get(eventRef);
       if(!rsvpSnap.exists) return;
       const cur = rsvpSnap.data();
       if(cur.status !== 'confirmed' && cur.status !== 'waitlist') return;
       freedSeat = cur.status === 'confirmed';
       tx.update(rsvpRef, { status: newStatus });
-      if(freedSeat){
-        const eventSnap = await tx.get(eventRef);
-        if(eventSnap.exists){
-          const ev = eventSnap.data();
-          tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
-        }
+      if(freedSeat && eventSnap.exists){
+        const ev = eventSnap.data();
+        tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
       }
     });
     if(freedSeat) await OpenPlayAPI._promoteNextFromWaitlist(eventId);
