@@ -336,6 +336,18 @@ function opLocationLinkHtml(ev, labelHtml){
   if(!href) return labelHtml;
   return `<a href="${esc(href)}" target="_blank" rel="noopener" class="op-location-link" onclick="event.stopPropagation()">${labelHtml}</a>`;
 }
+// Host actions (confirm/remove a joiner) write to a document owned by a
+// *different* user (their rsvp row), which Firestore security rules must
+// explicitly allow via a host-of-the-event check. If that rule isn't in
+// place yet, Firestore rejects the write with 'permission-denied' — this
+// turns that specific case into an actionable message instead of a vague
+// "could not remove" toast.
+function opFriendlyError(err, fallback){
+  if(err && err.code === 'permission-denied'){
+    return 'Your Firestore rules don\u2019t yet allow hosts to manage joiners \u2014 see the rules snippet in the setup notes.';
+  }
+  return (err && err.message) ? err.message : fallback;
+}
 
 function signInPrompt(afterLabel){
   return `
@@ -783,7 +795,7 @@ document.addEventListener('click', async function(e){
         renderActiveView();
       }catch(err){
         console.error(err);
-        toast(err && err.message ? err.message : 'Could not confirm this joiner.', 'error');
+        toast(opFriendlyError(err, 'Could not confirm this joiner.'), 'error');
         t.disabled = false;
       }
       break;
@@ -802,7 +814,7 @@ document.addEventListener('click', async function(e){
         renderActiveView();
       }catch(err){
         console.error(err);
-        toast('Could not remove this joiner.', 'error');
+        toast(opFriendlyError(err, 'Could not remove this joiner.'), 'error');
         t.disabled = false;
       }
       break;
