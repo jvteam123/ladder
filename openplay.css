@@ -43,6 +43,8 @@
 .op-badge{ font-size:11px; font-weight:700; padding:3px 8px; border-radius:20px; white-space:nowrap; }
 .op-badge-open{ background:rgba(62,213,152,0.15); color:var(--win); }
 .op-badge-full{ background:rgba(255,107,107,0.15); color:var(--loss); }
+.op-badge-happening{ background:rgba(255,193,7,0.15); color:#ffc107; }
+.op-badge-ended{ background:var(--surface-2); color:var(--text-dim); }
 
 .op-card-row{ font-size:13px; color:var(--text-dim); margin-top:3px; }
 
