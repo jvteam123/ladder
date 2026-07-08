@@ -994,31 +994,31 @@ async function opOpenEventDetail(eventId){
   let actionButton;
   if(isHost){
     actionButton = `
-      <button class="btn btn-ghost btn-block" data-action="op-manage-joiners" data-id="${ev.id}">Manage joiners</button>
-      <button class="btn btn-ghost btn-block" data-action="op-edit-event" data-id="${ev.id}">Edit event</button>
+      <button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${ev.id}">Manage Participants</button>
+      <button class="btn btn-ghost" data-action="op-edit-event" data-id="${ev.id}">Edit event</button>
       <button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
   } else if(myRsvp && myRsvp.leave_requested){
     actionButton = `
       <div class="op-status-note op-status-waitlist">Leave request sent — waiting for the host to confirm.</div>
-      <button class="btn btn-ghost btn-block" data-action="op-cancel-leave-request" data-id="${ev.id}">Cancel leave request</button>`;
+      <button class="btn btn-ghost" data-action="op-cancel-leave-request" data-id="${ev.id}">Cancel leave request</button>`;
   } else if(myRsvp && myRsvp.status === 'waitlist'){
     actionButton = `
       <div class="op-status-note op-status-waitlist">You're on the waitlist — the host still needs to confirm you.</div>
-      <button class="btn btn-ghost btn-block" data-action="op-request-leave" data-id="${ev.id}">Request to leave waitlist</button>`;
+      <button class="btn btn-ghost" data-action="op-request-leave" data-id="${ev.id}">Request to leave waitlist</button>`;
   } else if(myRsvp){
     actionButton = `
       <div class="op-status-note op-status-confirmed">You're in ✓ · ${myRsvp.paid ? 'Paid' : 'Unpaid'}</div>
-      <button class="btn btn-ghost btn-block" data-action="op-request-leave" data-id="${ev.id}">Request to leave</button>`;
+      <button class="btn btn-ghost" data-action="op-request-leave" data-id="${ev.id}">Request to leave</button>`;
   } else if(!opUI.user){
-    actionButton = `<button class="btn btn-primary btn-block" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
+    actionButton = `<button class="btn btn-primary" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
   } else {
-    actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
+    actionButton = `<button class="btn btn-primary" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
   }
   const subHostButton = isSubHost
-    ? `<button class="btn btn-ghost btn-block" data-action="op-manage-joiners" data-id="${ev.id}">Manage joiners (sub host)</button>`
+    ? `<button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${ev.id}">Manage Participants (sub host)</button>`
     : '';
   const participantsButton = (!isHost && !isSubHost)
-    ? `<button class="btn btn-ghost btn-block" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
+    ? `<button class="btn btn-ghost" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
 
   openModal(`
@@ -1038,8 +1038,8 @@ async function opOpenEventDetail(eventId){
       ${actionButton}
       ${subHostButton}
       ${participantsButton}
-      <button class="btn btn-ghost btn-block" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
-      <button class="btn btn-ghost btn-block" data-action="modal-close">Close</button>
+      <button class="btn btn-ghost" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
+      <button class="btn btn-ghost" data-action="modal-close">Close</button>
     </div>
   `);
 }
@@ -1193,13 +1193,13 @@ function opRenderEditEvent(eventId){
 async function opRenderManageJoiners(eventId){
   const ev = opUI.events.find(function(e){ return e.id === eventId; });
   if(!ev) return;
-  openModal(`<div class="modal-title">Manage joiners</div><div class="op-empty" style="padding:24px;">Loading\u2026</div>`);
+  openModal(`<div class="modal-title">Manage Participants</div><div class="op-empty" style="padding:24px;">Loading\u2026</div>`);
   let rows;
   try{
     rows = await OpenPlayAPI.listRsvpsForEvent(eventId);
   }catch(err){
     console.error(err);
-    openModal(`<div class="modal-title">Manage joiners</div><div class="op-empty">Couldn\u2019t load joiners. Please try again.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    openModal(`<div class="modal-title">Manage Participants</div><div class="op-empty">Couldn\u2019t load joiners. Please try again.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
     return;
   }
   const confirmed = rows.filter(function(r){ return r.status === 'confirmed'; });
@@ -1238,7 +1238,7 @@ async function opRenderManageJoiners(eventId){
   }
 
   openModal(`
-    <div class="modal-title">Manage joiners</div>
+    <div class="modal-title">Manage Participants</div>
     <div class="modal-sub">${esc(ev.title)}</div>
 
     <div class="op-h-title" style="font-size:14px; margin-top:14px;">Waitlist — pending confirmation (${waitlist.length})</div>
