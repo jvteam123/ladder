@@ -74,6 +74,13 @@
 }
 .op-user-signout:hover{ color:var(--text); text-decoration:underline; }
 
+.op-user-chip-guest{ justify-content:space-between; padding:8px 8px 8px 12px; }
+.op-user-chip-guest .op-user-name{ flex:none; color:var(--text-dim); }
+.op-google-btn-sm{
+  width:auto; padding:6px 12px; font-size:12.5px; gap:7px;
+}
+.op-google-btn-sm svg{ width:15px; height:15px; }
+
 .op-form{ display:flex; flex-direction:column; }
 .op-label{ font-size:12.5px; color:var(--text-dim); font-weight:600; display:block; margin-bottom:2px; flex:1; }
 .op-form-row{ display:flex; gap:10px; }
