@@ -108,7 +108,7 @@ const OpenPlayAPI = {
   // directly. For airtight enforcement, mirror MAX_ACCOUNTS_PER_DEVICE and
   // username-uniqueness in Firestore security rules, or move registration
   // behind a Cloud Function.
-  async registerWithUsernamePassword(username, password){
+  async registerWithUsernamePassword(username, password, displayName){
     if(!fbReady()) throw new Error('Sign-up isn\u2019t available right now.');
     const clean = (username || '').trim().toLowerCase();
     if(!/^[a-z0-9_]{3,20}$/.test(clean)){
@@ -116,6 +116,10 @@ const OpenPlayAPI = {
     }
     if(!password || password.length < 6){
       throw new Error('Password must be at least 6 characters.');
+    }
+    const cleanName = (displayName || '').trim();
+    if(!cleanName){
+      throw new Error('Enter your name.');
     }
 
     const deviceId = opGetDeviceId();
@@ -142,7 +146,7 @@ const OpenPlayAPI = {
       if(err && err.code === 'auth/email-already-in-use') throw new Error('That username is taken. Try another.');
       throw err;
     }
-    await cred.user.updateProfile({ displayName: clean });
+    await cred.user.updateProfile({ displayName: cleanName });
 
     // Reserve the username and record the device registration. Best-effort:
     // if these fail after the account was created, the account still works,
@@ -835,6 +839,10 @@ function opAuthFormHtml(formId, mode, tabAction){
       <button type="button" class="op-auth-tab ${isRegister ? 'active' : ''}" data-action="${tabAction}" data-mode="register">Create account</button>
     </div>
     <form id="${formId}" class="op-form" novalidate>
+      ${isRegister ? `
+      <label class="op-label">Name
+        <input class="op-input" name="display_name" autocomplete="name" placeholder="Your name" required minlength="1" maxlength="40" />
+      </label>` : ''}
       <label class="op-label">Username
         <input class="op-input" name="username" autocomplete="username" placeholder="letters, numbers, underscore" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]+" />
       </label>
@@ -882,10 +890,15 @@ async function opSubmitAuthForm(form, errEl, mode, onSuccess){
   const fd = new FormData(form);
   const username = (fd.get('username') || '').trim();
   const password = fd.get('password') || '';
+  const displayName = (fd.get('display_name') || '').trim();
   const submitBtn = form.querySelector('button[type="submit"]');
   const busyLabel = mode === 'register' ? 'Creating\u2026' : 'Signing in\u2026';
   const idleLabel = mode === 'register' ? 'Create account' : 'Sign in';
   if(mode === 'register'){
+    if(!displayName){
+      if(errEl){ errEl.textContent = 'Enter your name.'; errEl.style.display = 'block'; }
+      return;
+    }
     const confirmPassword = fd.get('confirm_password') || '';
     if(password !== confirmPassword){
       if(errEl){ errEl.textContent = 'Passwords don\u2019t match.'; errEl.style.display = 'block'; }
@@ -895,7 +908,7 @@ async function opSubmitAuthForm(form, errEl, mode, onSuccess){
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = busyLabel; }
   try{
     const user = mode === 'register'
-      ? await OpenPlayAPI.registerWithUsernamePassword(username, password)
+      ? await OpenPlayAPI.registerWithUsernamePassword(username, password, displayName)
       : await OpenPlayAPI.signInWithUsernamePassword(username, password);
     opUI.user = user;
     toast(`Welcome, ${user.display_name}!`, 'success');
