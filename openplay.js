@@ -148,9 +148,22 @@ const OpenPlayAPI = {
     });
     return resultStatus;
   },
-  // Player cancels their own spot (confirmed or waitlisted).
-  async cancelRsvp(eventId, user){
-    await OpenPlayAPI._releaseSpot(eventId, user.id, 'cancelled');
+  // Player REQUESTS to leave — this no longer cancels the spot outright.
+  // It just flags the rsvp so the host sees it in Manage joiners and can
+  // approve it (which is what actually frees the seat).
+  async requestLeave(eventId, user){
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, user.id));
+    await rsvpRef.update({ leave_requested: true });
+  },
+  // Player changes their mind before the host approves the leave request.
+  async cancelLeaveRequest(eventId, user){
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, user.id));
+    await rsvpRef.update({ leave_requested: false });
+  },
+  // Host approves a pending leave request — this is the step that actually
+  // releases the seat (mirrors _releaseSpot's normal cancel behavior).
+  async approveLeave(eventId, playerId){
+    await OpenPlayAPI._releaseSpot(eventId, playerId, 'cancelled');
   },
   // Host removes a joiner from their event (kick). Distinct status from a
   // self-cancel so the host can tell the difference if needed later.
@@ -451,19 +464,26 @@ async function opOpenEventDetail(eventId){
     actionButton = `
       <button class="btn btn-ghost btn-block" data-action="op-manage-joiners" data-id="${ev.id}">Manage joiners</button>
       <button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
+  } else if(myRsvp && myRsvp.leave_requested){
+    actionButton = `
+      <div class="op-status-note op-status-waitlist">Leave request sent — waiting for the host to confirm.</div>
+      <button class="btn btn-ghost btn-block" data-action="op-cancel-leave-request" data-id="${ev.id}">Cancel leave request</button>`;
   } else if(myRsvp && myRsvp.status === 'waitlist'){
     actionButton = `
       <div class="op-status-note op-status-waitlist">You're on the waitlist — the host still needs to confirm you.</div>
-      <button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave waitlist</button>`;
+      <button class="btn btn-ghost btn-block" data-action="op-request-leave" data-id="${ev.id}">Request to leave waitlist</button>`;
   } else if(myRsvp){
     actionButton = `
       <div class="op-status-note op-status-confirmed">You're in ✓ · ${myRsvp.paid ? 'Paid' : 'Unpaid'}</div>
-      <button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave / Cancel RSVP</button>`;
+      <button class="btn btn-ghost btn-block" data-action="op-request-leave" data-id="${ev.id}">Request to leave</button>`;
   } else if(!opUI.user){
     actionButton = `<button class="btn btn-primary btn-block" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
   } else {
     actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
   }
+  const participantsButton = !isHost
+    ? `<button class="btn btn-ghost btn-block" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
+    : '';
 
   openModal(`
     <div class="modal-title">${esc(ev.title)}</div>
@@ -479,8 +499,55 @@ async function opOpenEventDetail(eventId){
     ${ev.rules ? `<div class="op-detail-block"><div class="op-detail-block-title">Rules</div><div class="op-detail-block-body">${esc(ev.rules)}</div></div>` : ''}
     <div class="op-detail-actions">
       ${actionButton}
+      ${participantsButton}
       <button class="btn btn-ghost btn-block" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
       <button class="btn btn-ghost btn-block" data-action="modal-close">Close</button>
+    </div>
+  `);
+}
+
+/* ---------------- PARTICIPANTS (read-only, for joiners) ---------------- */
+async function opRenderParticipants(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev) return;
+  openModal(`<div class="modal-title">Participants</div><div class="op-empty" style="padding:24px;">Loading\u2026</div>`);
+  let rows;
+  try{
+    rows = await OpenPlayAPI.listRsvpsForEvent(eventId);
+  }catch(err){
+    console.error(err);
+    openModal(`<div class="modal-title">Participants</div><div class="op-empty">Couldn\u2019t load participants. Please try again.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
+  const confirmed = rows.filter(function(r){ return r.status === 'confirmed'; });
+  const waitlist = rows.filter(function(r){ return r.status === 'waitlist'; });
+
+  function readOnlyRow(r){
+    const avatar = r.player_photo_url
+      ? `<img class="op-user-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
+      : `<div class="op-user-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
+    return `
+      <div class="op-joiner-row">
+        ${avatar}
+        <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
+      </div>`;
+  }
+
+  openModal(`
+    <div class="modal-title">Participants</div>
+    <div class="modal-sub">${esc(ev.title)}</div>
+
+    <div class="op-h-title" style="font-size:14px; margin-top:14px;">Confirmed (${confirmed.length + 1}${ev.max_players ? ' / ' + ev.max_players : ''} — host included)</div>
+    <div class="op-joiner-list">
+      ${readOnlyRow({ player_name: (ev.host_name || 'Host') + ' (Host)', player_photo_url: ev.host_photo_url })}
+      ${confirmed.map(readOnlyRow).join('')}
+    </div>
+
+    <div class="op-h-title" style="font-size:14px; margin-top:18px;">Waitlist (${waitlist.length})</div>
+    ${waitlist.length ? `<div class="op-joiner-list">${waitlist.map(readOnlyRow).join('')}</div>` : `<div class="op-empty" style="padding:16px;">No one is waiting.</div>`}
+
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button>
     </div>
   `);
 }
@@ -513,6 +580,7 @@ async function opRenderManageJoiners(eventId){
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
         <div class="op-joiner-actions">
+          ${r.leave_requested ? `<span class="op-badge op-badge-leave">Wants to leave</span><button class="op-mini-btn op-mini-btn-danger" data-action="op-approve-leave" data-id="${ev.id}" data-player="${esc(r.player_id)}">Approve leave</button>` : ''}
           ${opts.showPaid ? `<button class="op-mini-btn ${isPaid ? 'op-mini-btn-paid' : 'op-mini-btn-unpaid'}" data-action="op-toggle-paid" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-paid="${isPaid ? '1' : '0'}">${isPaid ? 'Paid' : 'Unpaid'}</button>` : ''}
           ${opts.confirmable ? `<button class="op-mini-btn op-mini-btn-primary" data-action="op-confirm-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}">Confirm</button>` : ''}
           ${opts.moveToWaitlist ? `<button class="op-mini-btn op-mini-btn-ghost" data-action="op-move-to-waitlist" data-id="${ev.id}" data-player="${esc(r.player_id)}">Move to waitlist</button>` : ''}
@@ -767,15 +835,52 @@ document.addEventListener('click', async function(e){
       }
       break;
     }
-    case 'op-leave-event': {
+    case 'op-view-participants': {
+      await opRenderParticipants(t.dataset.id);
+      break;
+    }
+    case 'op-request-leave': {
+      if(t.disabled) return;
+      t.disabled = true;
       try{
-        await OpenPlayAPI.cancelRsvp(t.dataset.id, opUI.user);
-        toast('RSVP cancelled.', 'success');
-        closeModal();
+        await OpenPlayAPI.requestLeave(t.dataset.id, opUI.user);
+        toast('Leave request sent — the host will confirm.', 'success');
+        await opOpenEventDetail(t.dataset.id);
+      }catch(err){
+        console.error(err);
+        toast('Could not send a leave request. Please try again.', 'error');
+      }finally{
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-cancel-leave-request': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.cancelLeaveRequest(t.dataset.id, opUI.user);
+        toast('Leave request cancelled.', 'success');
+        await opOpenEventDetail(t.dataset.id);
+      }catch(err){
+        console.error(err);
+        toast('Could not cancel the leave request. Please try again.', 'error');
+      }finally{
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-approve-leave': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.approveLeave(t.dataset.id, t.dataset.player);
+        toast('Leave approved.', 'success');
+        await opRenderManageJoiners(t.dataset.id);
         renderActiveView();
       }catch(err){
         console.error(err);
-        toast('Could not cancel RSVP. Please try again.', 'error');
+        toast(opFriendlyError(err, 'Could not approve this leave request.'), 'error');
+        t.disabled = false;
       }
       break;
     }
