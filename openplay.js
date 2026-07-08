@@ -154,6 +154,26 @@ function maybeRerenderOpenPlay(){
   if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
 }
 
+function opHandleSharedLink(){
+  if(opUI._sharedLinkHandled) return;
+  const m = (location.hash || '').match(/open-play=([^&]+)/);
+  if(!m) return;
+  opUI._sharedLinkHandled = true;
+  const eventId = decodeURIComponent(m[1]);
+  // Small delay so this runs after script.js's own boot (which restores
+  // the last-used tab from storage and would otherwise clobber the
+  // Discover tab switch below).
+  setTimeout(function(){
+    const ev = opUI.events.find(function(e){ return e.id === eventId; });
+    if(window.state){ state.tab = 'discover'; saveAll(); renderAll(); }
+    if(ev){
+      setTimeout(function(){ opOpenEventDetail(eventId); }, 150);
+    } else {
+      toast('This open play link is no longer available.', 'error');
+    }
+  }, 500);
+}
+
 function opBoot(){
   // Catch the tail end of a signInWithRedirect() fallback, if one happened.
   if(fbReady() && window.fbAuth.getRedirectResult){
@@ -171,6 +191,7 @@ function opBoot(){
     opUI.eventsReady = true;
     opUI.error = null;
     maybeRerenderOpenPlay();
+    opHandleSharedLink();
   }, function(err){
     opUI.eventsReady = true;
     opUI.error = err;
@@ -223,16 +244,22 @@ function signInPrompt(afterLabel){
     </div>`;
 }
 
-function opUserChip(){
-  if(!opUI.user) return '';
-  const avatar = opUI.user.avatar_url
-    ? `<img class="op-user-avatar" src="${esc(opUI.user.avatar_url)}" alt="" referrerpolicy="no-referrer" />`
-    : `<div class="op-user-avatar op-user-avatar-fallback">${esc((opUI.user.display_name || '?').charAt(0).toUpperCase())}</div>`;
+function opAuthChip(){
+  if(opUI.user){
+    const avatar = opUI.user.avatar_url
+      ? `<img class="op-user-avatar" src="${esc(opUI.user.avatar_url)}" alt="" referrerpolicy="no-referrer" />`
+      : `<div class="op-user-avatar op-user-avatar-fallback">${esc((opUI.user.display_name || '?').charAt(0).toUpperCase())}</div>`;
+    return `
+      <div class="op-user-chip">
+        ${avatar}
+        <span class="op-user-name">${esc(opUI.user.display_name)}</span>
+        <button class="op-user-signout" data-action="op-sign-out" title="Sign out">Sign out</button>
+      </div>`;
+  }
   return `
-    <div class="op-user-chip">
-      ${avatar}
-      <span class="op-user-name">${esc(opUI.user.display_name)}</span>
-      <button class="op-user-signout" data-action="op-sign-out" title="Sign out">Sign out</button>
+    <div class="op-user-chip op-user-chip-guest">
+      <span class="op-user-name">Browsing as guest</span>
+      <button class="op-google-btn op-google-btn-sm" data-action="op-sign-in">${GOOGLE_G_SVG}<span>Sign in</span></button>
     </div>`;
 }
 
@@ -244,10 +271,6 @@ function renderDiscoverView(el){
   }
   if(opUI.loading){
     el.innerHTML = `<div class="op-wrap"><div class="op-empty">Loading open play\u2026</div></div>`;
-    return;
-  }
-  if(!opUI.user){
-    el.innerHTML = `<div class="op-wrap">${signInPrompt('browse open play')}</div>`;
     return;
   }
   if(opUI.error){
@@ -266,7 +289,7 @@ function renderDiscoverView(el){
         </div>
         <button class="btn btn-primary btn-sm" data-action="tab" data-tab="host">+ Host</button>
       </div>
-      ${opUserChip()}
+      ${opAuthChip()}
       ${events.length === 0 ? `
         <div class="op-empty">
           No open games posted yet.<br/>Be the first — tap <b>Host</b> to post one.
@@ -298,9 +321,22 @@ function opEventCard(ev){
 async function opOpenEventDetail(eventId){
   const ev = opUI.events.find(function(e){ return e.id === eventId; });
   if(!ev) return;
-  const myRsvp = await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id);
-  const isHost = ev.host_id === opUI.user.id;
+  const myRsvp = opUI.user ? await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id) : null;
+  const isHost = !!opUI.user && ev.host_id === opUI.user.id;
   const full = ev.max_players && ev.rsvp_count >= ev.max_players && !myRsvp;
+
+  let actionButton;
+  if(isHost){
+    actionButton = `<button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
+  } else if(myRsvp){
+    actionButton = `<button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave / Cancel RSVP</button>`;
+  } else if(!opUI.user){
+    actionButton = full
+      ? `<button class="btn btn-primary btn-block" disabled>Event Full</button>`
+      : `<button class="btn btn-primary btn-block" data-action="op-sign-in-to-join" data-id="${ev.id}">Sign in to Join</button>`;
+  } else {
+    actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}" ${full ? 'disabled' : ''}>${full ? 'Event Full' : 'Join'}</button>`;
+  }
 
   openModal(`
     <div class="modal-title">${esc(ev.title)}</div>
@@ -313,14 +349,27 @@ async function opOpenEventDetail(eventId){
       ${ev.fee_amount ? `<div class="op-detail-row">💵 <span>${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</span></div>` : ''}
     </div>
     <div class="op-detail-actions">
-      ${isHost
-        ? `<button class="op-btn-danger" data-action="op-cancel-event" data-id="${ev.id}">Cancel this event</button>`
-        : myRsvp
-          ? `<button class="btn btn-ghost btn-block" data-action="op-leave-event" data-id="${ev.id}">Leave / Cancel RSVP</button>`
-          : `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}" ${full ? 'disabled' : ''}>${full ? 'Event Full' : 'Join'}</button>`
-      }
+      ${actionButton}
       <button class="btn btn-ghost btn-block" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
       <button class="btn btn-ghost btn-block" data-action="modal-close">Close</button>
+    </div>
+  `);
+}
+
+function opConfirmCancelEvent(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev) return;
+  const rsvpNote = ev.rsvp_count
+    ? `<strong style="color:var(--loss);">${ev.rsvp_count} player${ev.rsvp_count!==1?'s':''} already RSVP'd</strong> — they'll lose their spot.`
+    : `No one has RSVP'd yet, so no one else will be affected.`;
+  openModal(`
+    <div class="modal-title">⚠️ Cancel "${esc(ev.title)}"?</div>
+    <div class="modal-sub" style="line-height:1.6;">
+      This removes the event from Discover for everyone. ${rsvpNote} This can't be undone.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-action="op-open-event" data-id="${ev.id}">Never mind</button>
+      <button class="op-btn-danger" data-action="op-cancel-event" data-id="${ev.id}">Yes, cancel event</button>
     </div>
   `);
 }
@@ -350,7 +399,7 @@ function renderHostView(el){
           <div class="op-h-sub">Post an open play — others can discover and join</div>
         </div>
       </div>
-      ${opUserChip()}
+      ${opAuthChip()}
 
       <form id="opHostForm" class="op-form">
         <label class="op-label">Title
@@ -462,6 +511,28 @@ document.addEventListener('click', async function(e){
       renderActiveView();
       break;
     }
+    case 'op-sign-in-to-join': {
+      if(t.disabled) return;
+      t.disabled = true;
+      const eventId = t.dataset.id;
+      try{
+        const user = await OpenPlayAPI.signInWithGoogle();
+        if(user){
+          opUI.user = user;
+          toast(`Welcome, ${user.display_name}!`, 'success');
+          await opOpenEventDetail(eventId); // reopen — Join is now available
+        }
+      }catch(err){
+        console.error(err);
+        const msg = (err && err.code === 'auth/popup-closed-by-user')
+          ? 'Sign-in was cancelled.'
+          : 'Sign-in failed. Please try again.';
+        toast(msg, 'error');
+      }finally{
+        t.disabled = false;
+      }
+      break;
+    }
     case 'op-open-event': {
       await opOpenEventDetail(t.dataset.id);
       break;
@@ -488,6 +559,10 @@ document.addEventListener('click', async function(e){
         console.error(err);
         toast('Could not cancel RSVP. Please try again.', 'error');
       }
+      break;
+    }
+    case 'op-confirm-cancel-event': {
+      opConfirmCancelEvent(t.dataset.id);
       break;
     }
     case 'op-cancel-event': {
