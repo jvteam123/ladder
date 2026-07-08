@@ -1236,6 +1236,7 @@ function opRenderEditEvent(eventId){
 
   const form = document.getElementById('opEditForm');
   if(form){
+    opWireLocationLinkPaste(form);
     form.addEventListener('submit', async function(e){
       e.preventDefault();
       const submitBtn = form.querySelector('button[type="submit"]');
@@ -1385,6 +1386,66 @@ function opConfirmCancelEvent(eventId){
 }
 
 /* ---------------- HOST view ---------------- */
+// True once the host has typed/changed anything in the in-progress "Host a
+// Game" form. Firestore's subscribeEvents() listener can fire — and call
+// maybeRerenderOpenPlay() — at any moment (someone else joins a game, a
+// game's status flips, etc), completely unrelated to what the host is
+// doing. renderHostView() used to rebuild its whole innerHTML on every one
+// of those events, which tore down and recreated the <form>. Recreating a
+// focused input mid-keystroke both drops its value AND blurs it — which is
+// exactly why this looked like "the keyboard closes and the form clears
+// itself": the rerender was the cause of both symptoms, not one causing
+// the other. While the form is dirty we now only refresh the read-only
+// lists below it and leave the form's DOM node alone (wired in renderHostView).
+let opHostFormDirty = false;
+
+function opHostListsHtml(myOpenEvents, myPastEvents){
+  return `
+    ${myOpenEvents.length ? `
+      <div class="op-h-title" style="margin-top:22px;">Your posted games (${myOpenEvents.length}/${MAX_OPEN_EVENTS_PER_HOST})</div>
+      <div class="op-event-list">${myOpenEvents.map(opEventCard).join('')}</div>
+    ` : ''}
+
+    ${myPastEvents.length ? `
+      <div class="op-h-title" style="margin-top:22px;">Past games</div>
+      <div class="op-h-sub" style="margin-bottom:10px;">Only your ${MAX_PAST_EVENTS_PER_HOST} most recent are kept \u2014 older ones are removed automatically.</div>
+      <div class="op-event-list">${myPastEvents.map(opEventCard).join('')}</div>
+    ` : ''}
+  `;
+}
+
+// Refresh just the "your posted games" / "past games" lists, without
+// touching the form above them (used while the host has an in-progress,
+// unsaved edit in the form — see the opHostFormDirty guard in renderHostView).
+function opRenderHostLists(el, myOpenEvents, myPastEvents){
+  const wrap = el.querySelector('#opHostListsWrap');
+  if(wrap) wrap.innerHTML = opHostListsHtml(myOpenEvents, myPastEvents);
+}
+
+// Lets a host paste a Google Maps / Waze / Apple Maps link straight into the
+// Location field and have it land in "Location link" instead, since that's
+// almost always what's actually meant when a URL gets pasted there. Wired
+// on both the "Host a Game" form and the edit-event form.
+function opWireLocationLinkPaste(form){
+  const nameInput = form.querySelector('[name="location_name"]');
+  const linkInput = form.querySelector('[name="location_link"]');
+  if(!nameInput || !linkInput) return;
+  nameInput.addEventListener('paste', function(e){
+    const cd = e.clipboardData || window.clipboardData;
+    const text = cd ? (cd.getData('text') || '').trim() : '';
+    if(!/^https?:\/\//i.test(text)) return; // not a link, let the paste behave normally
+    e.preventDefault();
+    linkInput.value = text;
+    linkInput.focus();
+    if(typeof linkInput.setSelectionRange === 'function'){
+      const len = linkInput.value.length;
+      try{ linkInput.setSelectionRange(len, len); }catch(err){ /* ignore */ }
+    }
+    if(form.id === 'opHostForm') opHostFormDirty = true;
+    toast('That looked like a map link \u2014 added it to Location link instead.', 'success');
+  });
+}
+
 function renderHostView(el){
   if(!fbReady()){
     el.innerHTML = `<div class="op-wrap"><div class="op-empty">Open Play isn\u2019t configured yet.<br/>Check the Firebase setup in firebase-init.js.</div></div>`;
@@ -1414,6 +1475,17 @@ function renderHostView(el){
     .sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); })
     .slice(0, MAX_PAST_EVENTS_PER_HOST);
   const atOpenLimit = myOpenEvents.length >= MAX_OPEN_EVENTS_PER_HOST;
+
+  // The host is actively filling out the form (and it's still valid to show
+  // — i.e. they haven't hit the open-game limit in the meantime from another
+  // tab/device). Leave the form node completely untouched and just refresh
+  // the lists underneath it, so newly-posted/updated games still stay live
+  // without ever touching what's being typed.
+  const existingForm = document.getElementById('opHostForm');
+  if(existingForm && opHostFormDirty && !atOpenLimit){
+    opRenderHostLists(el, myOpenEvents, myPastEvents);
+    return;
+  }
 
   el.innerHTML = `
     <div class="op-wrap">
@@ -1484,21 +1556,19 @@ function renderHostView(el){
         </form>
       `}
 
-      ${myOpenEvents.length ? `
-        <div class="op-h-title" style="margin-top:22px;">Your posted games (${myOpenEvents.length}/${MAX_OPEN_EVENTS_PER_HOST})</div>
-        <div class="op-event-list">${myOpenEvents.map(opEventCard).join('')}</div>
-      ` : ''}
-
-      ${myPastEvents.length ? `
-        <div class="op-h-title" style="margin-top:22px;">Past games</div>
-        <div class="op-h-sub" style="margin-bottom:10px;">Only your ${MAX_PAST_EVENTS_PER_HOST} most recent are kept \u2014 older ones are removed automatically.</div>
-        <div class="op-event-list">${myPastEvents.map(opEventCard).join('')}</div>
-      ` : ''}
+      <div id="opHostListsWrap">${opHostListsHtml(myOpenEvents, myPastEvents)}</div>
     </div>
   `;
 
+  opHostFormDirty = false;
   const form = document.getElementById('opHostForm');
   if(form){
+    // Any real edit marks the form dirty so a background Firestore update
+    // can't blow it away mid-fill. Cleared again on successful submit
+    // (opHostFormDirty is also reset at the top of every full render).
+    form.addEventListener('input', function(){ opHostFormDirty = true; });
+    form.addEventListener('change', function(){ opHostFormDirty = true; });
+    opWireLocationLinkPaste(form);
     form.addEventListener('submit', async function(e){
       e.preventDefault();
       const submitBtn = form.querySelector('button[type="submit"]');
@@ -1539,6 +1609,7 @@ function renderHostView(el){
       if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Posting\u2026'; }
       try{
         const ev = await OpenPlayAPI.createEvent(payload, opUI.user);
+        opHostFormDirty = false;
         toast('Open play posted!', 'success');
         state.tab = 'discover';
         saveAll(); renderAll();
