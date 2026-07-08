@@ -94,6 +94,11 @@ const OpenPlayAPI = {
   async cancelEvent(eventId){
     await window.fbDb.collection(EVENTS_COL).doc(eventId).update({ status: 'cancelled' });
   },
+  // Host edits details of an event they've already posted (title, location,
+  // time, capacity, fee, skill range, details/rules). Doesn't touch rsvps.
+  async updateEvent(eventId, payload){
+    await window.fbDb.collection(EVENTS_COL).doc(eventId).update(payload);
+  },
 
   // ----- rsvps -----
   // Returns the caller's live rsvp row (confirmed OR waitlist) — anything
@@ -523,6 +528,7 @@ async function opOpenEventDetail(eventId){
   if(isHost){
     actionButton = `
       <button class="btn btn-ghost btn-block" data-action="op-manage-joiners" data-id="${ev.id}">Manage joiners</button>
+      <button class="btn btn-ghost btn-block" data-action="op-edit-event" data-id="${ev.id}">Edit event</button>
       <button class="op-btn-danger" data-action="op-confirm-cancel-event" data-id="${ev.id}">Cancel this event</button>`;
   } else if(myRsvp && myRsvp.leave_requested){
     actionButton = `
@@ -610,6 +616,98 @@ async function opRenderParticipants(eventId){
       <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button>
     </div>
   `);
+}
+
+/* ---------------- EDIT EVENT (host) ---------------- */
+function opRenderEditEvent(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev) return;
+  const d = ev.start_time ? new Date(ev.start_time) : null;
+  const dateVal = (d && !isNaN(d)) ? d.toISOString().slice(0, 10) : '';
+  const timeVal = (d && !isNaN(d)) ? (String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')) : '';
+
+  openModal(`
+    <div class="modal-title">Edit event</div>
+    <form id="opEditForm" class="op-form">
+      <label class="op-label">Title
+        <input class="op-input" name="title" value="${esc(ev.title || '')}" required />
+      </label>
+      <label class="op-label">Location
+        <input class="op-input" name="location_name" value="${esc(ev.location_name || '')}" required />
+      </label>
+      <label class="op-label">Location link (optional)
+        <input class="op-input" type="url" name="location_link" value="${esc(ev.location_link || '')}" placeholder="Paste a Google Maps / Waze link" />
+      </label>
+      <div class="op-form-row">
+        <label class="op-label">Date
+          <input class="op-input" type="date" name="date" value="${esc(dateVal)}" required />
+        </label>
+        <label class="op-label">Time
+          <input class="op-input" type="time" name="time" value="${esc(timeVal)}" required />
+        </label>
+      </div>
+      <div class="op-form-row">
+        <label class="op-label">Max players (includes you as host)
+          <input class="op-input" type="number" name="max_players" min="2" max="64" value="${ev.max_players || 8}" />
+        </label>
+        <label class="op-label">Fee (optional)
+          <input class="op-input" name="fee_amount" value="${esc(ev.fee_amount || '')}" placeholder="₱300" />
+        </label>
+      </div>
+      <div class="op-form-row">
+        <label class="op-label">Min rating (optional)
+          <input class="op-input" type="number" step="0.1" name="skill_min" value="${ev.skill_min != null ? ev.skill_min : ''}" placeholder="3.0" />
+        </label>
+        <label class="op-label">Max rating (optional)
+          <input class="op-input" type="number" step="0.1" name="skill_max" value="${ev.skill_max != null ? ev.skill_max : ''}" placeholder="4.5" />
+        </label>
+      </div>
+      <label class="op-label">Details (optional)
+        <textarea class="op-input op-textarea" name="details">${esc(ev.details || '')}</textarea>
+      </label>
+      <label class="op-label">Rules (optional)
+        <textarea class="op-input op-textarea" name="rules">${esc(ev.rules || '')}</textarea>
+      </label>
+      <div class="modal-actions" style="margin-top:4px;">
+        <button type="button" class="btn btn-ghost" data-action="op-open-event" data-id="${ev.id}">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>
+  `);
+
+  const form = document.getElementById('opEditForm');
+  if(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const fd = new FormData(form);
+      const date = fd.get('date'), time = fd.get('time');
+      if(!date || !time){ toast('Pick a date and time.', 'error'); return; }
+      const start_time = new Date(`${date}T${time}`).toISOString();
+      const payload = {
+        title: (fd.get('title') || '').trim() || 'Open Play',
+        location_name: (fd.get('location_name') || '').trim(),
+        location_link: (fd.get('location_link') || '').trim() || null,
+        start_time: start_time,
+        max_players: Number(fd.get('max_players')) || null,
+        fee_amount: (fd.get('fee_amount') || '').trim() || null,
+        skill_min: fd.get('skill_min') ? Number(fd.get('skill_min')) : null,
+        skill_max: fd.get('skill_max') ? Number(fd.get('skill_max')) : null,
+        details: (fd.get('details') || '').trim() || null,
+        rules: (fd.get('rules') || '').trim() || null,
+      };
+      if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Saving\u2026'; }
+      try{
+        await OpenPlayAPI.updateEvent(ev.id, payload);
+        toast('Event updated.', 'success');
+        await opOpenEventDetail(ev.id);
+      }catch(err){
+        console.error(err);
+        toast('Could not save changes. Please try again.', 'error');
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'Save changes'; }
+      }
+    });
+  }
 }
 
 /* ---------------- MANAGE JOINERS (host) ---------------- */
@@ -975,6 +1073,10 @@ document.addEventListener('click', async function(e){
         console.error(err);
         toast('Could not cancel this event. Please try again.', 'error');
       }
+      break;
+    }
+    case 'op-edit-event': {
+      opRenderEditEvent(t.dataset.id);
       break;
     }
     case 'op-manage-joiners': {
