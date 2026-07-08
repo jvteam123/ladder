@@ -17,10 +17,38 @@
 
 const EVENTS_COL = 'openPlayEvents';
 const RSVPS_COL  = 'openPlayRsvps';
+const USERNAMES_COL = 'usernames';
+const DEVICES_COL = 'deviceRegistrations';
+
+// Anti-spam / anti-abuse limits. Enforced here client-side for a good UX,
+// but since a determined user can bypass client code, mirror these in
+// Firestore security rules too (see notes near OpenPlayAPI.createEvent /
+// registerWithUsernamePassword below) for real enforcement.
+const MAX_OPEN_EVENTS_PER_HOST = 2;   // "spam hosting" guard
+const MAX_PAST_EVENTS_PER_HOST = 2;   // auto-pruned, oldest-first
+const MAX_ACCOUNTS_PER_DEVICE  = 2;   // "spam registration" guard
+const USERNAME_EMAIL_SUFFIX = '@ladder-users.local'; // synthetic email so Firebase's email/password auth can be driven by a plain username
 
 function fbReady(){ return !!(window.fbAuth && window.fbDb); }
 
 function rsvpDocId(eventId, uid){ return eventId + '_' + uid; }
+
+// Persistent per-browser identifier used only to rate-limit how many
+// accounts can be *registered* from one device — not used for tracking,
+// ads, or anything beyond this spam guard. Falls back to null (guard
+// skipped) if storage is unavailable, e.g. private browsing.
+function opGetDeviceId(){
+  try{
+    let id = localStorage.getItem('op_device_id');
+    if(!id){
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2));
+      localStorage.setItem('op_device_id', id);
+    }
+    return id;
+  }catch(err){
+    return null;
+  }
+}
 
 function mapAuthUser(u){
   if(!u) return null;
@@ -67,6 +95,92 @@ const OpenPlayAPI = {
     await window.fbAuth.signOut();
   },
 
+  // ----- auth (Firebase Auth, username + password) -----
+  // Firebase's email/password auth is reused under the hood: the chosen
+  // username is mapped to a synthetic, non-routable email address so
+  // people never have to type or manage a real email for this. A
+  // `usernames` collection enforces uniqueness (case-insensitive) and a
+  // `deviceRegistrations` collection caps how many accounts a single
+  // device can create, as a lightweight guard against spam sign-ups.
+  //
+  // NOTE: these checks happen client-side before the writes, so they stop
+  // normal spam but not a determined attacker calling the Firebase SDK
+  // directly. For airtight enforcement, mirror MAX_ACCOUNTS_PER_DEVICE and
+  // username-uniqueness in Firestore security rules, or move registration
+  // behind a Cloud Function.
+  async registerWithUsernamePassword(username, password){
+    if(!fbReady()) throw new Error('Sign-up isn\u2019t available right now.');
+    const clean = (username || '').trim().toLowerCase();
+    if(!/^[a-z0-9_]{3,20}$/.test(clean)){
+      throw new Error('Username must be 3\u201320 characters: letters, numbers, underscore only.');
+    }
+    if(!password || password.length < 6){
+      throw new Error('Password must be at least 6 characters.');
+    }
+
+    const deviceId = opGetDeviceId();
+    const deviceRef = deviceId ? window.fbDb.collection(DEVICES_COL).doc(deviceId) : null;
+    if(deviceRef){
+      const deviceSnap = await deviceRef.get();
+      const count = deviceSnap.exists ? (deviceSnap.data().accountCount || 0) : 0;
+      if(count >= MAX_ACCOUNTS_PER_DEVICE){
+        throw new Error('This device has already created the maximum number of accounts (' + MAX_ACCOUNTS_PER_DEVICE + '). Sign in to an existing account instead.');
+      }
+    }
+
+    const usernameRef = window.fbDb.collection(USERNAMES_COL).doc(clean);
+    const usernameSnap = await usernameRef.get();
+    if(usernameSnap.exists){
+      throw new Error('That username is taken. Try another.');
+    }
+
+    const email = clean + USERNAME_EMAIL_SUFFIX;
+    let cred;
+    try{
+      cred = await window.fbAuth.createUserWithEmailAndPassword(email, password);
+    }catch(err){
+      if(err && err.code === 'auth/email-already-in-use') throw new Error('That username is taken. Try another.');
+      throw err;
+    }
+    await cred.user.updateProfile({ displayName: clean });
+
+    // Reserve the username and record the device registration. Best-effort:
+    // if these fail after the account was created, the account still works,
+    // it just won't count against future device/username checks.
+    try{
+      await usernameRef.set({
+        uid: cred.user.uid,
+        created_at: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      if(deviceRef){
+        await deviceRef.set({
+          accountCount: firebase.firestore.FieldValue.increment(1),
+          uids: firebase.firestore.FieldValue.arrayUnion(cred.user.uid),
+          last_seen: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+    }catch(err){
+      console.warn('Post-registration bookkeeping failed:', err);
+    }
+
+    return mapAuthUser(cred.user);
+  },
+  async signInWithUsernamePassword(username, password){
+    if(!fbReady()) throw new Error('Sign-in isn\u2019t available right now.');
+    const clean = (username || '').trim().toLowerCase();
+    if(!clean || !password) throw new Error('Enter your username and password.');
+    const email = clean + USERNAME_EMAIL_SUFFIX;
+    try{
+      const cred = await window.fbAuth.signInWithEmailAndPassword(email, password);
+      return mapAuthUser(cred.user);
+    }catch(err){
+      if(err && (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential')){
+        throw new Error('Incorrect username or password.');
+      }
+      throw err;
+    }
+  },
+
   // ----- events (live, cross-device via Firestore) -----
   subscribeEvents(onChange, onError){
     if(!fbReady()){ onError && onError(new Error('Firebase not configured.')); return function(){}; }
@@ -79,7 +193,24 @@ const OpenPlayAPI = {
         onError && onError(err);
       });
   },
+  // Counts a host's currently-open events — used both to show "X / 2 open
+  // games" in the UI and as a last-moment guard right before writing, so a
+  // second tab / double-tap can't slip past the limit shown in the form.
+  async countOpenEventsForHost(hostId){
+    const snap = await window.fbDb.collection(EVENTS_COL)
+      .where('host_id', '==', hostId)
+      .where('status', '==', 'open')
+      .get();
+    return snap.size;
+  },
   async createEvent(payload, host){
+    // Spam-hosting guard: cap how many *open* events one host can have live
+    // at once. (Also mirrored in the Host form UI so people see the limit
+    // before they fill out the form — see MAX_OPEN_EVENTS_PER_HOST.)
+    const openCount = await OpenPlayAPI.countOpenEventsForHost(host.id);
+    if(openCount >= MAX_OPEN_EVENTS_PER_HOST){
+      throw new Error('You already have ' + MAX_OPEN_EVENTS_PER_HOST + ' open games posted. Cancel one before posting another.');
+    }
     const event = Object.assign({
       host_id: host.id,
       host_name: host.display_name,
@@ -98,6 +229,17 @@ const OpenPlayAPI = {
   // time, capacity, fee, skill range, details/rules). Doesn't touch rsvps.
   async updateEvent(eventId, payload){
     await window.fbDb.collection(EVENTS_COL).doc(eventId).update(payload);
+  },
+  // Permanently removes an event and its rsvps. Used by the auto-cleanup
+  // that keeps only the MAX_PAST_EVENTS_PER_HOST most recent past events
+  // per host (see opCleanupOldPastEvents below) — old events just age out
+  // instead of piling up forever.
+  async deleteEvent(eventId){
+    const rsvpsSnap = await window.fbDb.collection(RSVPS_COL).where('event_id', '==', eventId).get();
+    const batch = window.fbDb.batch();
+    rsvpsSnap.docs.forEach(function(d){ batch.delete(d.ref); });
+    batch.delete(window.fbDb.collection(EVENTS_COL).doc(eventId));
+    await batch.commit();
   },
 
   // ----- rsvps -----
@@ -247,6 +389,29 @@ const opUI = { user: null, authReady: false, events: [], eventsReady: false, err
 Object.defineProperty(opUI, 'loading', { get: function(){ return !opUI.authReady || !opUI.eventsReady; } });
 
 let opUnsubEvents = null;
+
+// Keeps only the MAX_PAST_EVENTS_PER_HOST most recent *past* events for the
+// signed-in host, deleting older ones automatically (see deleteEvent). Runs
+// at most once per sign-in (guarded by opCleanupDoneFor) since the event
+// list can re-fire on every Firestore snapshot update.
+let opCleanupDoneFor = null;
+async function opCleanupOldPastEvents(){
+  if(!opUI.user || !opUI.eventsReady) return;
+  if(opCleanupDoneFor === opUI.user.id) return;
+  opCleanupDoneFor = opUI.user.id;
+  const now = Date.now();
+  const past = opUI.events.filter(function(e){
+    if(e.host_id !== opUI.user.id) return false;
+    const t = e.start_time ? new Date(e.start_time).getTime() : 0;
+    return !!t && t < now;
+  });
+  past.sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); }); // newest first
+  const toDelete = past.slice(MAX_PAST_EVENTS_PER_HOST);
+  for(const ev of toDelete){
+    try{ await OpenPlayAPI.deleteEvent(ev.id); }
+    catch(err){ console.warn('Auto-cleanup: could not delete old open-play event', ev.id, err); }
+  }
+}
 
 function maybeRerenderOpenPlay(){
   if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
@@ -434,13 +599,82 @@ function opFriendlyError(err, fallback){
   return (err && err.message) ? err.message : fallback;
 }
 
+// Which tab (login/register) the *inline* username+password form on the
+// full-page sign-in prompt (Host view) is showing. Separate from the modal
+// version's state (opModalAuth below) since both can exist at different times.
+let opInlineAuthMode = 'login';
+
+// Shared markup for the username/password tabs + form. `formId` lets the
+// inline (Host view) and modal (Join flow) instances coexist without id
+// clashes; `mode` is 'login' or 'register'; `tabAction`/`submitAction` are
+// the data-action values the click/submit wiring below listens for.
+function opAuthFormHtml(formId, mode, tabAction){
+  const isRegister = mode === 'register';
+  return `
+    <div class="op-auth-tabs">
+      <button type="button" class="op-auth-tab ${!isRegister ? 'active' : ''}" data-action="${tabAction}" data-mode="login">Sign in</button>
+      <button type="button" class="op-auth-tab ${isRegister ? 'active' : ''}" data-action="${tabAction}" data-mode="register">Create account</button>
+    </div>
+    <form id="${formId}" class="op-form" novalidate>
+      <label class="op-label">Username
+        <input class="op-input" name="username" autocomplete="username" placeholder="letters, numbers, underscore" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]+" />
+      </label>
+      <label class="op-label">Password
+        <input class="op-input" type="password" name="password" autocomplete="${isRegister ? 'new-password' : 'current-password'}" placeholder="At least 6 characters" required minlength="6" />
+      </label>
+      <div class="op-auth-error" id="${formId}Error"></div>
+      <button type="submit" class="btn btn-primary btn-block">${isRegister ? 'Create account' : 'Sign in'}</button>
+    </form>`;
+}
+
 function signInPrompt(afterLabel){
   return `
     <div class="op-signin-card">
       <div class="op-signin-title">Sign in to ${esc(afterLabel)}</div>
-      <div class="op-signin-sub">Sign in with Google to browse open play games, RSVP, or host your own.</div>
+      <div class="op-signin-sub">Sign in with Google, or use a username and password.</div>
       <button class="op-google-btn" data-action="op-sign-in">${GOOGLE_G_SVG}<span>Continue with Google</span></button>
+      <div class="op-signin-divider"><span>or</span></div>
+      ${opAuthFormHtml('opInlineAuthForm', opInlineAuthMode, 'op-inline-auth-tab')}
     </div>`;
+}
+
+// Wires the submit handler for the inline (Host view) username/password
+// form. Safe to call unconditionally after any render — no-ops if the form
+// isn't in the DOM (i.e. the user is already signed in).
+function opWireInlineAuthForm(){
+  const form = document.getElementById('opInlineAuthForm');
+  if(!form) return;
+  const errEl = document.getElementById('opInlineAuthFormError');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    await opSubmitAuthForm(form, errEl, opInlineAuthMode, function(){ renderActiveView(); });
+  });
+}
+
+// Shared submit logic for both the inline and modal username/password
+// forms: registers or signs in, shows a friendly inline error on failure,
+// and on success updates opUI.user + calls onSuccess to move on.
+async function opSubmitAuthForm(form, errEl, mode, onSuccess){
+  if(errEl){ errEl.style.display = 'none'; errEl.textContent = ''; }
+  const fd = new FormData(form);
+  const username = (fd.get('username') || '').trim();
+  const password = fd.get('password') || '';
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const busyLabel = mode === 'register' ? 'Creating\u2026' : 'Signing in\u2026';
+  const idleLabel = mode === 'register' ? 'Create account' : 'Sign in';
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = busyLabel; }
+  try{
+    const user = mode === 'register'
+      ? await OpenPlayAPI.registerWithUsernamePassword(username, password)
+      : await OpenPlayAPI.signInWithUsernamePassword(username, password);
+    opUI.user = user;
+    toast(`Welcome, ${user.display_name}!`, 'success');
+    onSuccess(user);
+  }catch(err){
+    console.error(err);
+    if(errEl){ errEl.textContent = (err && err.message) ? err.message : 'Something went wrong. Please try again.'; errEl.style.display = 'block'; }
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = idleLabel; }
+  }
 }
 
 function opAuthChip(){
@@ -458,8 +692,50 @@ function opAuthChip(){
   return `
     <div class="op-user-chip op-user-chip-guest">
       <span class="op-user-name">Browsing as guest</span>
-      <button class="op-google-btn op-google-btn-sm" data-action="op-sign-in">${GOOGLE_G_SVG}<span>Sign in</span></button>
+      <button class="op-google-btn op-google-btn-sm" data-action="op-open-auth-modal" data-after="sign in">${GOOGLE_G_SVG}<span>Sign in</span></button>
     </div>`;
+}
+
+/* ---------------- modal sign-in (Google + username/password) ----------------
+   Used from places that only have room for a single "Sign in" button (the
+   guest chip, the Join flow) rather than the full inline form used in the
+   Host view. Reopens itself on tab switch since openModal() just replaces
+   the modal's HTML wholesale. */
+const opModalAuth = { mode: 'login', afterLabel: 'continue', onSuccess: null };
+
+function opModalAuthHtml(){
+  return `
+    <div class="op-signin-title">Sign in to ${esc(opModalAuth.afterLabel)}</div>
+    <div class="op-signin-sub">Sign in with Google, or use a username and password.</div>
+    <button class="op-google-btn" data-action="op-sign-in-modal">${GOOGLE_G_SVG}<span>Continue with Google</span></button>
+    <div class="op-signin-divider"><span>or</span></div>
+    ${opAuthFormHtml('opModalAuthForm', opModalAuth.mode, 'op-modal-auth-tab')}
+    <button class="btn btn-ghost btn-block" data-action="modal-close" style="margin-top:10px;">Cancel</button>`;
+}
+
+function opWireModalAuthForm(){
+  const form = document.getElementById('opModalAuthForm');
+  if(!form) return;
+  const errEl = document.getElementById('opModalAuthFormError');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    await opSubmitAuthForm(form, errEl, opModalAuth.mode, function(user){
+      closeModal();
+      if(typeof opModalAuth.onSuccess === 'function') opModalAuth.onSuccess(user);
+      else renderActiveView();
+    });
+  });
+}
+
+// afterLabel: short phrase for "Sign in to ___" (e.g. "join this game").
+// onSuccess(user): called after a successful sign-in/register, instead of
+// the default plain re-render — e.g. to reopen an event detail modal.
+function opOpenAuthModal(afterLabel, onSuccess){
+  opModalAuth.afterLabel = afterLabel || 'continue';
+  opModalAuth.onSuccess = onSuccess || null;
+  opModalAuth.mode = 'login';
+  openModal(opModalAuthHtml());
+  opWireModalAuthForm();
 }
 
 /* ---------------- DISCOVER view ---------------- */
@@ -814,10 +1090,22 @@ function renderHostView(el){
   }
   if(!opUI.user){
     el.innerHTML = `<div class="op-wrap">${signInPrompt('host a game')}</div>`;
+    opWireInlineAuthForm();
     return;
   }
 
-  const myEvents = opUI.events.filter(function(e){ return e.host_id === opUI.user.id && e.status === 'open'; });
+  // Auto-prune old past events for this host (fire-and-forget; re-renders
+  // itself via maybeRerenderOpenPlay if anything actually gets deleted).
+  opCleanupOldPastEvents().then(function(){ maybeRerenderOpenPlay(); });
+
+  const now = Date.now();
+  const mine = opUI.events.filter(function(e){ return e.host_id === opUI.user.id; });
+  const myOpenEvents = mine.filter(function(e){ return e.status === 'open'; });
+  const myPastEvents = mine
+    .filter(function(e){ const t = e.start_time ? new Date(e.start_time).getTime() : 0; return !!t && t < now; })
+    .sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); })
+    .slice(0, MAX_PAST_EVENTS_PER_HOST);
+  const atOpenLimit = myOpenEvents.length >= MAX_OPEN_EVENTS_PER_HOST;
 
   el.innerHTML = `
     <div class="op-wrap">
@@ -829,52 +1117,65 @@ function renderHostView(el){
       </div>
       ${opAuthChip()}
 
-      <form id="opHostForm" class="op-form">
-        <label class="op-label">Title
-          <input class="op-input" name="title" placeholder="Saturday Morning Open Play" required />
-        </label>
-        <label class="op-label">Location
-          <input class="op-input" name="location_name" placeholder="Marian Lakeview Park Subd" required />
-        </label>
-        <label class="op-label">Location link (optional)
-          <input class="op-input" type="url" name="location_link" placeholder="Paste a Google Maps / Waze link" />
-        </label>
-        <div class="op-form-row">
-          <label class="op-label">Date
-            <input class="op-input" type="date" name="date" required />
-          </label>
-          <label class="op-label">Time
-            <input class="op-input" type="time" name="time" required />
-          </label>
+      ${atOpenLimit ? `
+        <div class="op-limit-notice">
+          You have ${myOpenEvents.length} / ${MAX_OPEN_EVENTS_PER_HOST} open games posted \u2014 that\u2019s the limit.
+          Cancel one below to post a new one.
         </div>
-        <div class="op-form-row">
-          <label class="op-label">Max players (includes you as host)
-            <input class="op-input" type="number" name="max_players" min="2" max="64" value="8" />
+      ` : `
+        <form id="opHostForm" class="op-form">
+          <label class="op-label">Title
+            <input class="op-input" name="title" placeholder="Saturday Morning Open Play" required />
           </label>
-          <label class="op-label">Fee (optional)
-            <input class="op-input" name="fee_amount" placeholder="₱300" />
+          <label class="op-label">Location
+            <input class="op-input" name="location_name" placeholder="Marian Lakeview Park Subd" required />
           </label>
-        </div>
-        <div class="op-form-row">
-          <label class="op-label">Min rating (optional)
-            <input class="op-input" type="number" step="0.1" name="skill_min" placeholder="3.0" />
+          <label class="op-label">Location link (optional)
+            <input class="op-input" type="url" name="location_link" placeholder="Paste a Google Maps / Waze link" />
           </label>
-          <label class="op-label">Max rating (optional)
-            <input class="op-input" type="number" step="0.1" name="skill_max" placeholder="4.5" />
+          <div class="op-form-row">
+            <label class="op-label">Date
+              <input class="op-input" type="date" name="date" required />
+            </label>
+            <label class="op-label">Time
+              <input class="op-input" type="time" name="time" required />
+            </label>
+          </div>
+          <div class="op-form-row">
+            <label class="op-label">Max players (includes you as host)
+              <input class="op-input" type="number" name="max_players" min="2" max="64" value="8" />
+            </label>
+            <label class="op-label">Fee (optional)
+              <input class="op-input" name="fee_amount" placeholder="₱300" />
+            </label>
+          </div>
+          <div class="op-form-row">
+            <label class="op-label">Min rating (optional)
+              <input class="op-input" type="number" step="0.1" name="skill_min" placeholder="3.0" />
+            </label>
+            <label class="op-label">Max rating (optional)
+              <input class="op-input" type="number" step="0.1" name="skill_max" placeholder="4.5" />
+            </label>
+          </div>
+          <label class="op-label">Details (optional)
+            <textarea class="op-input op-textarea" name="details" placeholder="Format, courts, parking, what to bring\u2026"></textarea>
           </label>
-        </div>
-        <label class="op-label">Details (optional)
-          <textarea class="op-input op-textarea" name="details" placeholder="Format, courts, parking, what to bring\u2026"></textarea>
-        </label>
-        <label class="op-label">Rules (optional)
-          <textarea class="op-input op-textarea" name="rules" placeholder="e.g. Bring your own paddle, rotate every game, 10-min no-show grace period\u2026"></textarea>
-        </label>
-        <button type="submit" class="btn btn-primary btn-block">Post Open Play</button>
-      </form>
+          <label class="op-label">Rules (optional)
+            <textarea class="op-input op-textarea" name="rules" placeholder="e.g. Bring your own paddle, rotate every game, 10-min no-show grace period\u2026"></textarea>
+          </label>
+          <button type="submit" class="btn btn-primary btn-block">Post Open Play</button>
+        </form>
+      `}
 
-      ${myEvents.length ? `
-        <div class="op-h-title" style="margin-top:22px;">Your posted games</div>
-        <div class="op-event-list">${myEvents.map(opEventCard).join('')}</div>
+      ${myOpenEvents.length ? `
+        <div class="op-h-title" style="margin-top:22px;">Your posted games (${myOpenEvents.length}/${MAX_OPEN_EVENTS_PER_HOST})</div>
+        <div class="op-event-list">${myOpenEvents.map(opEventCard).join('')}</div>
+      ` : ''}
+
+      ${myPastEvents.length ? `
+        <div class="op-h-title" style="margin-top:22px;">Past games</div>
+        <div class="op-h-sub" style="margin-bottom:10px;">Only your ${MAX_PAST_EVENTS_PER_HOST} most recent are kept \u2014 older ones are removed automatically.</div>
+        <div class="op-event-list">${myPastEvents.map(opEventCard).join('')}</div>
       ` : ''}
     </div>
   `;
@@ -884,6 +1185,12 @@ function renderHostView(el){
     form.addEventListener('submit', async function(e){
       e.preventDefault();
       const submitBtn = form.querySelector('button[type="submit"]');
+      // Defensive re-check in case another tab/device posted an event since
+      // this view rendered (form is normally hidden once at the limit).
+      if(myOpenEvents.length >= MAX_OPEN_EVENTS_PER_HOST){
+        toast('You\u2019ve reached the ' + MAX_OPEN_EVENTS_PER_HOST + '-open-game limit. Cancel one first.', 'error');
+        return;
+      }
       const fd = new FormData(form);
       const date = fd.get('date'), time = fd.get('time');
       if(!date || !time){ toast('Pick a date and time.', 'error'); return; }
@@ -909,8 +1216,9 @@ function renderHostView(el){
         setTimeout(function(){ opOpenEventDetail(ev.id); }, 200);
       }catch(err){
         console.error(err);
-        toast('Could not post this event. Please try again.', 'error');
+        toast(opFriendlyError(err, 'Could not post this event. Please try again.'), 'error');
         if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'Post Open Play'; }
+        renderActiveView(); // refresh the "your posted games" count/limit banner
       }
     });
   }
@@ -953,6 +1261,46 @@ document.addEventListener('click', async function(e){
       renderActiveView();
       break;
     }
+    case 'op-inline-auth-tab': {
+      opInlineAuthMode = t.dataset.mode === 'register' ? 'register' : 'login';
+      renderActiveView();
+      break;
+    }
+    case 'op-modal-auth-tab': {
+      opModalAuth.mode = t.dataset.mode === 'register' ? 'register' : 'login';
+      openModal(opModalAuthHtml());
+      opWireModalAuthForm();
+      break;
+    }
+    case 'op-open-auth-modal': {
+      opOpenAuthModal(t.dataset.after || 'continue');
+      break;
+    }
+    case 'op-sign-in-modal': {
+      if(t.disabled) return;
+      const info = opInAppBrowserInfo();
+      if(info.isInApp){ opInAppBrowserPrompt(); return; }
+      t.disabled = true;
+      try{
+        const user = await OpenPlayAPI.signInWithGoogle();
+        if(user){
+          toast(`Welcome, ${user.display_name}!`, 'success');
+          opUI.user = user;
+          closeModal();
+          if(typeof opModalAuth.onSuccess === 'function') opModalAuth.onSuccess(user);
+          else renderActiveView();
+        }
+      }catch(err){
+        console.error(err);
+        const msg = (err && err.code === 'auth/popup-closed-by-user')
+          ? 'Sign-in was cancelled.'
+          : 'Sign-in failed. Please try again.';
+        toast(msg, 'error');
+      }finally{
+        t.disabled = false;
+      }
+      break;
+    }
     case 'op-open-in-browser': {
       opOpenInSystemBrowser(t.dataset.url);
       break;
@@ -968,26 +1316,10 @@ document.addEventListener('click', async function(e){
     }
     case 'op-sign-in-to-join': {
       if(t.disabled) return;
-      const info = opInAppBrowserInfo();
-      if(info.isInApp){ opInAppBrowserPrompt(); return; }
-      t.disabled = true;
       const eventId = t.dataset.id;
-      try{
-        const user = await OpenPlayAPI.signInWithGoogle();
-        if(user){
-          opUI.user = user;
-          toast(`Welcome, ${user.display_name}!`, 'success');
-          await opOpenEventDetail(eventId); // reopen — Join is now available
-        }
-      }catch(err){
-        console.error(err);
-        const msg = (err && err.code === 'auth/popup-closed-by-user')
-          ? 'Sign-in was cancelled.'
-          : 'Sign-in failed. Please try again.';
-        toast(msg, 'error');
-      }finally{
-        t.disabled = false;
-      }
+      opOpenAuthModal('join this game', function(){
+        opOpenEventDetail(eventId); // reopen — Join is now available
+      });
       break;
     }
     case 'op-open-event': {
