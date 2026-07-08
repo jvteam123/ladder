@@ -1,11 +1,11 @@
-// Maezku Ladder — minimal service worker
+// Micro Ladder — minimal service worker
 // Purpose: satisfies Chrome/Android's PWA installability requirement for a
 // registered service worker with a fetch handler, so the native
 // "beforeinstallprompt" install banner/button is offered on Android.
 // This is intentionally a thin pass-through cache (app-shell only);
 // it does not attempt full offline support of dynamic content.
 
-const CACHE_NAME = 'maezku-ladder-v1';
+const CACHE_NAME = 'micro-ladder-v1';
 const APP_SHELL = ['./matchmaker.html'];
 
 self.addEventListener('install', (event) => {
