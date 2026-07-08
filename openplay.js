@@ -396,8 +396,8 @@ let opUnsubEvents = null;
 // list can re-fire on every Firestore snapshot update.
 let opCleanupDoneFor = null;
 async function opCleanupOldPastEvents(){
-  if(!opUI.user || !opUI.eventsReady) return;
-  if(opCleanupDoneFor === opUI.user.id) return;
+  if(!opUI.user || !opUI.eventsReady) return false;
+  if(opCleanupDoneFor === opUI.user.id) return false; // already checked this session
   opCleanupDoneFor = opUI.user.id;
   const now = Date.now();
   const past = opUI.events.filter(function(e){
@@ -407,10 +407,12 @@ async function opCleanupOldPastEvents(){
   });
   past.sort(function(a, b){ return new Date(b.start_time) - new Date(a.start_time); }); // newest first
   const toDelete = past.slice(MAX_PAST_EVENTS_PER_HOST);
+  let deletedAny = false;
   for(const ev of toDelete){
-    try{ await OpenPlayAPI.deleteEvent(ev.id); }
+    try{ await OpenPlayAPI.deleteEvent(ev.id); deletedAny = true; }
     catch(err){ console.warn('Auto-cleanup: could not delete old open-play event', ev.id, err); }
   }
+  return deletedAny;
 }
 
 function maybeRerenderOpenPlay(){
@@ -1139,9 +1141,11 @@ function renderHostView(el){
     return;
   }
 
-  // Auto-prune old past events for this host (fire-and-forget; re-renders
-  // itself via maybeRerenderOpenPlay if anything actually gets deleted).
-  opCleanupOldPastEvents().then(function(){ maybeRerenderOpenPlay(); });
+  // Auto-prune old past events for this host (runs once per sign-in via
+  // opCleanupDoneFor). Only triggers a rerender if something was actually
+  // deleted — critical, since rerendering unconditionally here would just
+  // call this same function again on every render, in an endless loop.
+  opCleanupOldPastEvents().then(function(deletedAny){ if(deletedAny) maybeRerenderOpenPlay(); });
 
   const now = Date.now();
   const mine = opUI.events.filter(function(e){ return e.host_id === opUI.user.id; });
