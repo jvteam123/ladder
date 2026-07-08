@@ -137,8 +137,14 @@
 
 .op-detail-actions{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .op-detail-actions .btn,
-.op-detail-actions .op-btn-danger{ flex:1 1 auto; min-width:clamp(120px, 40vw, 160px); }
+.op-detail-actions .op-btn-danger{ flex:1 1 auto; min-width:clamp(110px, 38vw, 150px); }
 .op-detail-actions .op-status-note{ flex:1 1 100%; }
+/* btn-ghost is transparent by default, which nearly disappears against the
+   modal's own background once buttons are small side-by-side pills instead
+   of full-width rows. Give them a filled background here so the boundary
+   is always visible, especially on narrow/mobile screens. */
+.op-detail-actions .btn-ghost{ background:var(--surface-2); border:1px solid var(--line); }
+.op-detail-actions .op-btn-danger{ background:var(--surface-2); }
 
 .op-btn-danger{
   background:transparent; color:var(--loss); border:1px solid var(--loss-dim);
