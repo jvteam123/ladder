@@ -438,8 +438,37 @@ function opHandleSharedLink(){
 }
 
 function opBoot(){
+  // firebase-init.js runs synchronously right before this script, so
+  // window.fbAuth/window.fbDb are normally set by the time we get here.
+  // But if that init failed (blocked network to Firebase, bad config,
+  // an ad/privacy blocker, etc.) fbReady() stays false forever and the
+  // old one-shot check below silently left Discover/Host stuck on
+  // "Loading..." with no explanation. Poll briefly instead, and if it's
+  // still not ready after a few seconds, surface a real error so it's
+  // obvious what's wrong instead of spinning indefinitely.
+  let bootAttempts = 0;
+  const BOOT_MAX_ATTEMPTS = 20; // ~10s at 500ms
+  (function tryBoot(){
+    if(fbReady()){
+      opBootReady();
+      return;
+    }
+    bootAttempts++;
+    if(bootAttempts >= BOOT_MAX_ATTEMPTS){
+      console.error('Open Play: Firebase never became ready (window.fbAuth/window.fbDb missing). Check firebase-init.js and your network — Firebase requests may be blocked.');
+      opUI.authReady = true;
+      opUI.eventsReady = true;
+      opUI.error = new Error('Couldn\u2019t connect to the live backend. Check your connection and reload \u2014 if this keeps happening, Firebase requests may be blocked on this network/browser.');
+      maybeRerenderOpenPlay();
+      return;
+    }
+    setTimeout(tryBoot, 500);
+  })();
+}
+
+function opBootReady(){
   // Catch the tail end of a signInWithRedirect() fallback, if one happened.
-  if(fbReady() && window.fbAuth.getRedirectResult){
+  if(window.fbAuth.getRedirectResult){
     window.fbAuth.getRedirectResult().catch(function(err){ console.warn('Google redirect sign-in error:', err); });
   }
 
@@ -460,6 +489,22 @@ function opBoot(){
     opUI.error = err;
     maybeRerenderOpenPlay();
   });
+
+  // Extra safety net: even with fbReady() true, onAuthStateChanged or
+  // onSnapshot could still never fire (e.g. Firestore/Auth requests
+  // blocked by network policy or a browser extension). Don't let either
+  // one hang the UI forever — flip a clear error after a timeout if
+  // still waiting.
+  setTimeout(function(){
+    let changed = false;
+    if(!opUI.authReady){ opUI.authReady = true; changed = true; }
+    if(!opUI.eventsReady){
+      opUI.eventsReady = true;
+      opUI.error = opUI.error || new Error('Taking too long to connect. Check your connection and reload.');
+      changed = true;
+    }
+    if(changed) maybeRerenderOpenPlay();
+  }, 12000);
 }
 
 /* ---------------- nav wiring ---------------- */
