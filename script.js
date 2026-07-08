@@ -26,43 +26,6 @@
   }
 })();
 
-(function(){
-  // Disable right-click context menu
-  document.addEventListener('contextmenu', function(e){ e.preventDefault(); });
-
-  // Block common view-source / inspect shortcuts
-  document.addEventListener('keydown', function(e){
-    var k = e.key, c = e.ctrlKey||e.metaKey, s = e.shiftKey;
-    // Ctrl+U (view source), Ctrl+S (save), Ctrl+Shift+I/J/C (devtools), F12
-    if(
-      (c && k==='u') ||
-      (c && k==='s') ||
-      (c && s && (k==='I'||k==='i')) ||
-      (c && s && (k==='J'||k==='j')) ||
-      (c && s && (k==='C'||k==='c')) ||
-      k==='F12'
-    ){ e.preventDefault(); e.stopPropagation(); return false; }
-  });
-
-  // DevTools size-change detection
-  var _dt = {open:false};
-  var _threshold = 160;
-  setInterval(function(){
-    var w = window.outerWidth - window.innerWidth;
-    var h = window.outerHeight - window.innerHeight;
-    var isOpen = w > _threshold || h > _threshold;
-    if(isOpen && !_dt.open){
-      _dt.open = true;
-      var el = document.getElementById('ml-devtools-warning');
-      if(el) el.classList.add('show');
-    } else if(!isOpen && _dt.open){
-      _dt.open = false;
-      var el2 = document.getElementById('ml-devtools-warning');
-      if(el2) el2.classList.remove('show');
-    }
-  }, 1000);
-})();
-
 /* ============================================================
    STORAGE KEYS
    ============================================================ */
@@ -3689,7 +3652,7 @@ function downloadFullSchedulePoster(customTitle, paperSize){
 
   const posterHtml = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
-<title>Maezku Ladder — Full Schedule</title>
+<title>Micro Ladder — Full Schedule</title>
 <style>
   @page{ size:${pageSize}; margin:0.5in; }
   *{box-sizing:border-box;}
@@ -3727,7 +3690,7 @@ function downloadFullSchedulePoster(customTitle, paperSize){
   <div class="pp-print-bar"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
   <div class="pp-header">
     <h1>🏆 ${esc(customTitle)}</h1>
-    <div class="sub">Maezku Ladder — Generated ${dateStr} · ${paperSize ? paperSize.toUpperCase() : 'LETTER'}</div>
+    <div class="sub">Micro Ladder — Generated ${dateStr} · ${paperSize ? paperSize.toUpperCase() : 'LETTER'}</div>
     <div class="pp-meta">
       <div><b>${totalMatches}</b>Matches</div>
       <div><b>${allGens.length}</b>Round${allGens.length!==1?'s':''}</div>
@@ -3736,7 +3699,7 @@ function downloadFullSchedulePoster(customTitle, paperSize){
     </div>
   </div>
   ${roundsHtml}
-  <div class="pp-footer">Maezku Ladder · Pickleball 2v2 Matchmaker</div>
+  <div class="pp-footer">Micro Ladder · Pickleball 2v2 Matchmaker</div>
 </body></html>`;
 
   const blob = new Blob([posterHtml], { type: 'text/html' });
@@ -4890,7 +4853,7 @@ function exportData(filename){
 function importDataFromText(txt){
   try{
     const dump = JSON.parse(txt);
-    if(!dump || !Array.isArray(dump.players)) { toast("That file isn't a valid Maezku Ladder backup.", 'error'); return; }
+    if(!dump || !Array.isArray(dump.players)) { toast("That file isn't a valid Micro Ladder backup.", 'error'); return; }
     state.players = dump.players;
     state.players.forEach(pl => {
       if(typeof pl.isSub !== 'boolean') pl.isSub = false;
@@ -5140,7 +5103,7 @@ function updateTabsFade(){
 function openNavMenu(){
   openModal(`
     <div class="modal-title">Navigate</div>
-    <div class="modal-sub">Jump straight to any section of Maezku Ladder.</div>
+    <div class="modal-sub">Jump straight to any section of Micro Ladder.</div>
     <div class="nav-menu-list">
       ${NAV_SECTIONS.map(it=>`
         <button class="nav-menu-item ${state.tab===it.id?'active':''}" data-action="nav-menu-go" data-tab="${it.id}">
@@ -7047,7 +7010,7 @@ window.addEventListener('appinstalled', function(){
   const topBtn = document.getElementById('topbar-install-btn');
   if(topBtn) topBtn.style.display = 'none';
   _deferredInstallPrompt = null;
-  toast('Maezku Ladder installed.', 'success');
+  toast('Micro Ladder installed.', 'success');
 });
 
 function initInstallBanner(){
@@ -7070,7 +7033,7 @@ function initInstallBanner(){
         // Android / Chrome / Edge — native prompt
         _deferredInstallPrompt.prompt();
         const { outcome } = await _deferredInstallPrompt.userChoice;
-        if(outcome === 'accepted') toast('Installing Maezku Ladder…', 'info');
+        if(outcome === 'accepted') toast('Installing Micro Ladder…', 'info');
         _deferredInstallPrompt = null;
         topBtn.style.display = 'none';
       } else if(isIOS){
@@ -7080,7 +7043,7 @@ function initInstallBanner(){
           <div class="modal-sub" style="line-height:1.8; font-size:13.5px; color:var(--text-dim);">
             <div style="margin-bottom:10px;">1. Tap the <strong style="color:var(--text);">Share</strong> button ⬆️ in Safari's bottom toolbar</div>
             <div style="margin-bottom:10px;">2. Scroll and tap <strong style="color:var(--text);">"Add to Home Screen"</strong></div>
-            <div>3. Tap <strong style="color:var(--ball);">Add</strong> — Maezku Ladder appears on your home screen like a native app!</div>
+            <div>3. Tap <strong style="color:var(--ball);">Add</strong> — Micro Ladder appears on your home screen like a native app!</div>
           </div>
           <div class="modal-actions">
             <button class="btn btn-primary btn-block" data-action="modal-close">Got it</button>
@@ -8755,12 +8718,12 @@ function psConfirmStart() {
 })();
 
 /* ================================================================
-   © 2026 Renzku — Maezku Ladder. All Rights Reserved.
+   © 2026 Renzku — Micro Ladder. All Rights Reserved.
    Unauthorized use or reproduction is strictly prohibited.
    Original Authors: Mae & Renzku | Fingerprint: ML-MAEZKU-2026-ORIGINAL
    ================================================================ */
 const _kitchenLadderSig = Object.freeze({
-  app: "Maezku Ladder",
+  app: "Micro Ladder",
   author: "Mae & Renzku",
   year: 2026,
   fingerprint: "ML-MAEZKU-2026-ORIGINAL",
@@ -8956,197 +8919,3 @@ const _kitchenLadderSig = Object.freeze({
 })();
 
 
-/* ================================================================
-   KITCHEN LADDER — PROTECTION LAYER
-   Techniques: DevTools detection, right-click/copy disable,
-   authorship watermark in storage, console branding,
-   source obfuscation notice, mutation observer guard.
-   ================================================================ */
-(function klProtect(){
-
-  /* 1. ---- Console branding — anyone opening DevTools sees this ---- */
-  const S1 = 'font-size:22px;font-weight:900;color:#D7F23D;background:#11151A;padding:8px 18px;border-radius:8px;';
-  const S2 = 'font-size:13px;color:#9AA5B1;background:#11151A;padding:4px 18px 8px;';
-  const S3 = 'font-size:12px;color:#FF6B6B;background:#11151A;padding:2px 18px 6px;';
-  console.log('%c🏓 Maezku Ladder', S1);
-  console.log('%c© 2026 Maezku · All Rights Reserved\nhttps://github.com/renzku · znerolodarbe@gmail.com', S2);
-  console.log('%c⚠️  This app is protected. Unauthorized copying is prohibited.', S3);
-
-  /* 2. ---- Burn authorship into every available storage layer ---- */
-  const SIG = {
-    app: 'Maezku Ladder',
-    author: 'Mae & Renzku',
-    contact: 'znerolodarbe@gmail.com',
-    year: 2026,
-    fingerprint: 'ML-MAEZKU-2026-ORIGINAL',
-    rights: 'All Rights Reserved',
-    built: new Date().toISOString(),
-  };
-  try { localStorage.setItem('_ml_author', JSON.stringify(SIG)); } catch(e){}
-  try { sessionStorage.setItem('_ml_author', JSON.stringify(SIG)); } catch(e){}
-  try {
-    const req = indexedDB.open('_ml_meta', 1);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if(!db.objectStoreNames.contains('sig')) db.createObjectStore('sig');
-    };
-    req.onsuccess = e => {
-      const db = e.target.result;
-      const tx = db.transaction('sig','readwrite');
-      tx.objectStore('sig').put(SIG, 'authorship');
-    };
-  } catch(e){}
-
-  /* 3. ---- Right-click disable with polite message ---- */
-  document.addEventListener('contextmenu', function(e){
-    const tag = e.target.tagName;
-    if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return; // allow on form fields
-    e.preventDefault();
-    showCopyWarning();
-  });
-
-  /* 4. ---- Keyboard shortcut intercepts ---- */
-  document.addEventListener('keydown', function(e){
-    const ctrl = e.ctrlKey || e.metaKey;
-    // Block Ctrl+U (view-source), Ctrl+S (save), Ctrl+Shift+I/J/C (devtools)
-    if(ctrl && (e.key === 'u' || e.key === 'U')) { e.preventDefault(); showCopyWarning(); return; }
-    if(ctrl && (e.key === 's' || e.key === 'S')) { e.preventDefault(); showSaveWarning(); return; }
-    if(ctrl && e.shiftKey && ['i','I','j','J','c','C'].includes(e.key)) { showDevToolsWarning(); return; }
-    if(e.key === 'F12') { showDevToolsWarning(); return; }
-    // Block Ctrl+A (select all) outside inputs
-    if(ctrl && (e.key === 'a' || e.key === 'A')){
-      const tag = document.activeElement && document.activeElement.tagName;
-      if(tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT'){ e.preventDefault(); return; }
-    }
-    // Block Ctrl+C copy on non-input elements
-    if(ctrl && (e.key === 'c' || e.key === 'C')){
-      const sel = window.getSelection();
-      if(sel && sel.toString().length > 0){
-        const tag = document.activeElement && document.activeElement.tagName;
-        if(tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT'){
-          e.preventDefault();
-          showCopyWarning();
-        }
-      }
-    }
-  });
-
-  /* 5. ---- DevTools size-change detection ---- */
-  let _devtoolsOpen = false;
-  const DT_THRESHOLD = 160;
-  function checkDevTools(){
-    const widthDiff  = window.outerWidth  - window.innerWidth;
-    const heightDiff = window.outerHeight - window.innerHeight;
-    const open = widthDiff > DT_THRESHOLD || heightDiff > DT_THRESHOLD;
-    if(open && !_devtoolsOpen){
-      _devtoolsOpen = true;
-      showDevToolsWarning();
-    } else if(!open && _devtoolsOpen){
-      _devtoolsOpen = false;
-      hideDevToolsWarning();
-    }
-  }
-  setInterval(checkDevTools, 1500);
-
-  /* 6. ---- Print intercept ---- */
-  window.addEventListener('beforeprint', function(){
-    const el = document.getElementById('ml-devtools-warning');
-    if(el){
-      el.querySelector('.dw-title').textContent = '🖨️ Printing Disabled';
-      el.querySelector('.dw-msg').textContent =
-        'Maezku Ladder is proprietary software by Mae & Renzku. Printing or screenshotting this app for redistribution is not permitted.';
-      el.classList.add('show');
-    }
-    setTimeout(hideDevToolsWarning, 3000);
-  });
-
-  /* 7. ---- Drag intercept (prevent drag-saving images/elements, desktop only) ---- */
-  document.addEventListener('dragstart', function(e){
-    // Only block on desktop pointer events, never block touch-initiated events
-    if(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return;
-    if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA'){
-      e.preventDefault();
-    }
-  });
-
-  /* 8. ---- Clipboard intercept — append attribution on copy ---- */
-  document.addEventListener('copy', function(e){
-    const sel = window.getSelection();
-    if(!sel || !sel.toString().trim()) return;
-    const tag = document.activeElement && document.activeElement.tagName;
-    if(tag === 'INPUT' || tag === 'TEXTAREA') return;
-    const original = sel.toString();
-    const attribution = '\n\n— Maezku Ladder © 2026 Maezku. All Rights Reserved.';
-    try {
-      e.clipboardData.setData('text/plain', original + attribution);
-      e.preventDefault();
-    } catch(err){}
-  });
-
-  /* 9. ---- Mutation observer: guard brand-name & copyright from removal ---- */
-  const brandObs = new MutationObserver(function(muts){
-    muts.forEach(function(m){
-      m.removedNodes.forEach(function(n){
-        if(n.nodeType === 1){
-          const cls = n.className || '';
-          if(typeof cls === 'string' && (cls.includes('brand') || cls.includes('topbar'))){
-            console.warn('[KL] Protected element removed — authorship guard triggered.');
-          }
-        }
-      });
-    });
-  });
-  brandObs.observe(document.body, { childList: true, subtree: true });
-
-  /* 10. ---- Hidden authorship element in DOM ---- */
-  const meta = document.createElement('meta');
-  meta.name = 'kl-author';
-  meta.content = 'Maezku Ladder © 2026 Maezku. All Rights Reserved. Fingerprint: ML-MAEZKU-2026-ORIGINAL';
-  document.head.appendChild(meta);
-
-  /* ---- UI helper: copy warning ---- */
-  function showCopyWarning(){
-    _showWarning(
-      '🔒',
-      'Content Protected',
-      'Maezku Ladder is proprietary software by Mae & Renzku.\nUnauthorized copying or redistribution is prohibited.\n\n© 2026 Maezku · All Rights Reserved'
-    );
-  }
-  function showSaveWarning(){
-    _showWarning(
-      '💾',
-      'Saving Disabled',
-      'This app\'s source code is protected intellectual property.\nSaving or redistributing this file without permission is prohibited.\n\n© 2026 Maezku · All Rights Reserved'
-    );
-  }
-  function showDevToolsWarning(){
-    _showWarning(
-      '🛠️',
-      'Developer Tools Detected',
-      'Maezku Ladder\'s source code is the intellectual property of Renzku.\nInspecting or copying this code without permission is prohibited.\n\n© 2026 Maezku · All Rights Reserved'
-    );
-  }
-  function _showWarning(icon, title, msg){
-    let el = document.getElementById('ml-devtools-warning');
-    if(!el){
-      el = document.createElement('div');
-      el.id = 'ml-devtools-warning';
-      el.innerHTML = `
-        <div class="dw-icon">${icon}</div>
-        <div class="dw-title">${title}</div>
-        <div class="dw-msg">${msg.replace(/\n/g,'<br>')}</div>
-        <button class="dw-close" onclick="document.getElementById('ml-devtools-warning').classList.remove('show')">I Understand</button>`;
-      document.body.appendChild(el);
-    } else {
-      el.querySelector('.dw-icon').textContent = icon;
-      el.querySelector('.dw-title').textContent = title;
-      el.querySelector('.dw-msg').innerHTML = msg.replace(/\n/g,'<br>');
-    }
-    el.classList.add('show');
-  }
-  function hideDevToolsWarning(){
-    const el = document.getElementById('ml-devtools-warning');
-    if(el) el.classList.remove('show');
-  }
-
-})();
