@@ -117,6 +117,7 @@
 .op-status-waitlist{ background:rgba(255,193,7,0.12); color:#ffc107; }
 
 .op-badge-muted{ background:var(--surface-2); color:var(--text-dim); }
+.op-badge-leave{ background:rgba(255,107,107,0.15); color:var(--loss); }
 
 .op-joiner-list{ display:flex; flex-direction:column; gap:8px; }
 .op-joiner-row{
