@@ -328,9 +328,11 @@ const OpenPlayAPI = {
       const ev = eventSnap.data();
       const rsvpSnap = await tx.get(rsvpRef);
       if(!rsvpSnap.exists || rsvpSnap.data().status !== 'waitlist') return;
-      // The host occupies one of the max_players slots too, so a joiner
-      // can only be confirmed while (confirmed joiners + host) < max.
-      if(ev.max_players && ((ev.rsvp_count || 0) + 1) >= ev.max_players){
+      // The host occupies one of the max_players slots too — unless the
+      // host opted out of counting toward the cap — so a joiner can only
+      // be confirmed while (confirmed joiners + host, if counted) < max.
+      const hostCounts = ev.host_counts_toward_max !== false;
+      if(ev.max_players && ((ev.rsvp_count || 0) + (hostCounts ? 1 : 0)) >= ev.max_players){
         throw new Error('Event is full — remove a player or move one to the waitlist first.');
       }
       tx.update(rsvpRef, { status: 'confirmed' });
@@ -350,7 +352,14 @@ const OpenPlayAPI = {
       tx.update(rsvpRef, { status: 'waitlist' });
       if(eventSnap.exists){
         const ev = eventSnap.data();
-        tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
+        const updates = { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) };
+        // A sub host who's no longer confirmed can't keep the role.
+        if(ev.sub_host_id === playerId){
+          updates.sub_host_id = null;
+          updates.sub_host_name = null;
+          updates.sub_host_photo_url = null;
+        }
+        tx.update(eventRef, updates);
       }
     });
   },
@@ -358,6 +367,23 @@ const OpenPlayAPI = {
   async markPaid(eventId, playerId, paid){
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
     await rsvpRef.update({ paid: !!paid });
+  },
+  // Host designates a confirmed joiner as "sub host" — someone who can help
+  // run the event (e.g. manage joiners) if the host isn't around. Stored on
+  // the event doc itself since there's only ever one at a time.
+  async setSubHost(eventId, playerId, playerName, photoUrl){
+    await window.fbDb.collection(EVENTS_COL).doc(eventId).update({
+      sub_host_id: playerId,
+      sub_host_name: playerName || null,
+      sub_host_photo_url: photoUrl || null,
+    });
+  },
+  async clearSubHost(eventId){
+    await window.fbDb.collection(EVENTS_COL).doc(eventId).update({
+      sub_host_id: null,
+      sub_host_name: null,
+      sub_host_photo_url: null,
+    });
   },
   // Shared helper: marks a joiner's rsvp as cancelled/removed, and frees
   // their seat if they held a confirmed spot. No one is auto-promoted from
@@ -375,9 +401,17 @@ const OpenPlayAPI = {
       if(cur.status !== 'confirmed' && cur.status !== 'waitlist') return;
       const freedSeat = cur.status === 'confirmed';
       tx.update(rsvpRef, { status: newStatus });
-      if(freedSeat && eventSnap.exists){
+      if(eventSnap.exists){
         const ev = eventSnap.data();
-        tx.update(eventRef, { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) });
+        const updates = {};
+        if(freedSeat) updates.rsvp_count = Math.max(0, (ev.rsvp_count || 0) - 1);
+        // A departing/removed player who was the sub host can't keep the role.
+        if(ev.sub_host_id === playerId){
+          updates.sub_host_id = null;
+          updates.sub_host_name = null;
+          updates.sub_host_photo_url = null;
+        }
+        if(Object.keys(updates).length) tx.update(eventRef, updates);
       }
     });
   }
@@ -535,12 +569,26 @@ window.renderActiveView = function(){
 };
 
 /* ---------------- shared bits ---------------- */
-// The host always occupies one of the max_players slots (they're playing
-// too), so "filled" = confirmed joiners + 1, and a max_players of 8 really
-// only leaves 7 spots open to joiners.
-function opFilledCount(ev){ return (ev.rsvp_count || 0) + 1; }
+// By default the host occupies one of the max_players slots too (they're
+// playing too), so "filled" = confirmed joiners + 1, and a max_players of 8
+// really only leaves 7 spots open to joiners. Hosts can opt out of this via
+// the "count yourself as one of the max players" checkbox when posting/
+// editing an event (ev.host_counts_toward_max === false) — in that case the
+// max only caps joiners, and the host plays on top of it.
+function opHostCountsTowardMax(ev){ return ev.host_counts_toward_max !== false; }
+function opFilledCount(ev){ return (ev.rsvp_count || 0) + (opHostCountsTowardMax(ev) ? 1 : 0); }
 function opIsFull(ev){ return !!ev.max_players && opFilledCount(ev) >= ev.max_players; }
 function opAvailable(ev){ return ev.max_players ? Math.max(0, ev.max_players - opFilledCount(ev)) : null; }
+// Label for the "Confirmed (...)" header on Manage joiners / Participants.
+// confirmedCount is the number of non-host confirmed joiners; the host is
+// always shown as playing regardless of whether they count toward the cap.
+function opConfirmedHeaderLabel(ev, confirmedCount){
+  const total = confirmedCount + 1;
+  if(!ev.max_players) return String(total);
+  return opHostCountsTowardMax(ev)
+    ? `${total} / ${ev.max_players} — host included`
+    : `${total} playing · ${confirmedCount} / ${ev.max_players} spots — host doesn\u2019t count toward max`;
+}
 
 function fmtWhen(iso){
   if(!iso) return '';
@@ -846,7 +894,8 @@ function opEventCard(ev){
       </div>
       <div class="op-card-row">📍 ${opLocationLinkHtml(ev, esc(ev.location_name))}</div>
       <div class="op-card-row">🗓️ ${fmtWhen(ev.start_time)}</div>
-      <div class="op-card-row">👥 ${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players (incl. host) · hosted by ${esc(ev.host_name)}</div>
+      <div class="op-card-row">👥 ${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players${opHostCountsTowardMax(ev) ? ' (incl. host)' : ''} · hosted by ${esc(ev.host_name)}</div>
+      ${ev.fee_amount ? `<div class="op-card-row">💵 ${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</div>` : ''}
     </div>
   `;
 }
@@ -856,6 +905,7 @@ async function opOpenEventDetail(eventId){
   if(!ev) return;
   const myRsvp = opUI.user ? await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id) : null;
   const isHost = !!opUI.user && ev.host_id === opUI.user.id;
+  const isSubHost = !!opUI.user && !isHost && ev.sub_host_id === opUI.user.id;
   const full = opIsFull(ev);
 
   let actionButton;
@@ -881,7 +931,10 @@ async function opOpenEventDetail(eventId){
   } else {
     actionButton = `<button class="btn btn-primary btn-block" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
   }
-  const participantsButton = !isHost
+  const subHostButton = isSubHost
+    ? `<button class="btn btn-ghost btn-block" data-action="op-manage-joiners" data-id="${ev.id}">Manage joiners (sub host)</button>`
+    : '';
+  const participantsButton = (!isHost && !isSubHost)
     ? `<button class="btn btn-ghost btn-block" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
 
@@ -891,14 +944,16 @@ async function opOpenEventDetail(eventId){
     <div class="op-detail-rows">
       <div class="op-detail-row">📍 ${opLocationLinkHtml(ev, `<span>${esc(ev.location_name)}</span>`)}</div>
       <div class="op-detail-row">🗓️ <span>${fmtWhen(ev.start_time)}</span></div>
-      <div class="op-detail-row">👥 <span>${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players (incl. host)${full ? ' · waitlist open' : ''}</span></div>
+      <div class="op-detail-row">👥 <span>${opFilledCount(ev)}${ev.max_players ? ' / ' + ev.max_players : ''} players${opHostCountsTowardMax(ev) ? ' (incl. host)' : ''}${full ? ' · waitlist open' : ''}</span></div>
       ${(ev.skill_min || ev.skill_max) ? `<div class="op-detail-row">🎯 <span>Rating ${ev.skill_min || '—'}–${ev.skill_max || '—'}</span></div>` : ''}
       ${ev.fee_amount ? `<div class="op-detail-row">💵 <span>${esc(String(ev.fee_amount))}${ev.fee_note ? ' — ' + esc(ev.fee_note) : ''}</span></div>` : ''}
+      ${ev.sub_host_name ? `<div class="op-detail-row">🙋 <span>Sub host: ${esc(ev.sub_host_name)}</span></div>` : ''}
     </div>
     ${ev.details ? `<div class="op-detail-block"><div class="op-detail-block-title">Details</div><div class="op-detail-block-body">${esc(ev.details)}</div></div>` : ''}
     ${ev.rules ? `<div class="op-detail-block"><div class="op-detail-block-title">Rules</div><div class="op-detail-block-body">${esc(ev.rules)}</div></div>` : ''}
     <div class="op-detail-actions">
       ${actionButton}
+      ${subHostButton}
       ${participantsButton}
       <button class="btn btn-ghost btn-block" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
       <button class="btn btn-ghost btn-block" data-action="modal-close">Close</button>
@@ -926,10 +981,12 @@ async function opRenderParticipants(eventId){
     const avatar = r.player_photo_url
       ? `<img class="op-user-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
       : `<div class="op-user-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
+    const isSubHost = r.player_id && ev.sub_host_id === r.player_id;
     return `
       <div class="op-joiner-row">
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
+        ${isSubHost ? '<span class="op-badge op-badge-subhost">Sub host</span>' : ''}
       </div>`;
   }
 
@@ -937,7 +994,7 @@ async function opRenderParticipants(eventId){
     <div class="modal-title">Participants</div>
     <div class="modal-sub">${esc(ev.title)}</div>
 
-    <div class="op-h-title" style="font-size:14px; margin-top:14px;">Confirmed (${confirmed.length + 1}${ev.max_players ? ' / ' + ev.max_players : ''} — host included)</div>
+    <div class="op-h-title" style="font-size:14px; margin-top:14px;">Confirmed (${opConfirmedHeaderLabel(ev, confirmed.length)})</div>
     <div class="op-joiner-list">
       ${readOnlyRow({ player_name: (ev.host_name || 'Host') + ' (Host)', player_photo_url: ev.host_photo_url })}
       ${confirmed.map(readOnlyRow).join('')}
@@ -981,13 +1038,17 @@ function opRenderEditEvent(eventId){
         </label>
       </div>
       <div class="op-form-row">
-        <label class="op-label">Max players (includes you as host)
+        <label class="op-label">Max players
           <input class="op-input" type="number" name="max_players" min="2" max="64" value="${ev.max_players || 8}" />
         </label>
         <label class="op-label">Fee (optional)
           <input class="op-input" name="fee_amount" value="${esc(ev.fee_amount || '')}" placeholder="₱300" />
         </label>
       </div>
+      <label class="op-checkbox-row">
+        <input type="checkbox" name="host_counts_toward_max" ${opHostCountsTowardMax(ev) ? 'checked' : ''} />
+        Count yourself as one of the max players
+      </label>
       <div class="op-form-row">
         <label class="op-label">Min rating (optional)
           <input class="op-input" type="number" step="0.1" name="skill_min" value="${ev.skill_min != null ? ev.skill_min : ''}" placeholder="3.0" />
@@ -1025,6 +1086,7 @@ function opRenderEditEvent(eventId){
         start_time: start_time,
         max_players: Number(fd.get('max_players')) || null,
         fee_amount: (fd.get('fee_amount') || '').trim() || null,
+        host_counts_toward_max: fd.get('host_counts_toward_max') === 'on',
         skill_min: fd.get('skill_min') ? Number(fd.get('skill_min')) : null,
         skill_max: fd.get('skill_max') ? Number(fd.get('skill_max')) : null,
         details: (fd.get('details') || '').trim() || null,
@@ -1060,6 +1122,10 @@ async function opRenderManageJoiners(eventId){
   const confirmed = rows.filter(function(r){ return r.status === 'confirmed'; });
   const waitlist = rows.filter(function(r){ return r.status === 'waitlist'; });
   const removed = rows.filter(function(r){ return r.status === 'removed' || r.status === 'cancelled'; });
+  // Only the actual host can assign/reassign the sub host — someone viewing
+  // this screen as the sub host themselves can manage joiners but shouldn't
+  // be able to hand the role to someone else (or off to a third party).
+  const isActualHost = !!opUI.user && ev.host_id === opUI.user.id;
 
   function joinerRow(r, opts){
     opts = opts || {};
@@ -1067,15 +1133,21 @@ async function opRenderManageJoiners(eventId){
       ? `<img class="op-user-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
       : `<div class="op-user-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
     const isPaid = !!r.paid;
+    const isSubHost = opts.subHostToggle && r.player_id && ev.sub_host_id === r.player_id;
     return `
       <div class="op-joiner-row">
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
         <div class="op-joiner-actions">
+          ${isSubHost ? '<span class="op-badge op-badge-subhost">Sub host</span>' : ''}
           ${r.leave_requested ? `<span class="op-badge op-badge-leave">Wants to leave</span><button class="op-mini-btn op-mini-btn-danger" data-action="op-approve-leave" data-id="${ev.id}" data-player="${esc(r.player_id)}">Approve leave</button>` : ''}
           ${opts.showPaid ? `<button class="op-mini-btn ${isPaid ? 'op-mini-btn-paid' : 'op-mini-btn-unpaid'}" data-action="op-toggle-paid" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-paid="${isPaid ? '1' : '0'}">${isPaid ? 'Paid' : 'Unpaid'}</button>` : ''}
           ${opts.confirmable ? `<button class="op-mini-btn op-mini-btn-primary" data-action="op-confirm-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}">Confirm</button>` : ''}
           ${opts.moveToWaitlist ? `<button class="op-mini-btn op-mini-btn-ghost" data-action="op-move-to-waitlist" data-id="${ev.id}" data-player="${esc(r.player_id)}">Move to waitlist</button>` : ''}
+          ${opts.subHostToggle ? (isSubHost
+            ? `<button class="op-mini-btn op-mini-btn-ghost" data-action="op-clear-sub-host" data-id="${ev.id}">Remove sub host</button>`
+            : `<button class="op-mini-btn op-mini-btn-ghost" data-action="op-make-sub-host" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-name="${esc(r.player_name || 'this player')}" data-photo="${esc(r.player_photo_url || '')}">Make sub host</button>`
+          ) : ''}
           ${opts.removable ? `<button class="op-mini-btn op-mini-btn-danger" data-action="op-confirm-remove-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-name="${esc(r.player_name || 'this player')}">Remove</button>` : ''}
           ${opts.tag ? `<span class="op-badge op-badge-muted">${opts.tag}</span>` : ''}
         </div>
@@ -1089,10 +1161,11 @@ async function opRenderManageJoiners(eventId){
     <div class="op-h-title" style="font-size:14px; margin-top:14px;">Waitlist — pending confirmation (${waitlist.length})</div>
     ${waitlist.length ? `<div class="op-joiner-list">${waitlist.map(function(r){ return joinerRow(r, { confirmable: true, removable: true, showPaid: true }); }).join('')}</div>` : `<div class="op-empty" style="padding:16px;">No one is waiting to be confirmed.</div>`}
 
-    <div class="op-h-title" style="font-size:14px; margin-top:18px;">Confirmed (${confirmed.length + 1}${ev.max_players ? ' / ' + ev.max_players : ''} — host included)</div>
+    <div class="op-h-title" style="font-size:14px; margin-top:18px;">Confirmed (${opConfirmedHeaderLabel(ev, confirmed.length)})</div>
+    ${isActualHost ? `<div class="op-h-sub" style="margin-bottom:8px;">Tap \u201cMake sub host\u201d on a confirmed player to let them help manage joiners while you\u2019re away.</div>` : ''}
     <div class="op-joiner-list">
       ${joinerRow({ player_name: (ev.host_name || 'Host') + ' (Host)', player_photo_url: ev.host_photo_url }, { tag: 'Host' })}
-      ${confirmed.map(function(r){ return joinerRow(r, { removable: true, moveToWaitlist: true, showPaid: true }); }).join('')}
+      ${confirmed.map(function(r){ return joinerRow(r, { removable: true, moveToWaitlist: true, showPaid: true, subHostToggle: isActualHost }); }).join('')}
     </div>
     ${confirmed.length === 0 ? `<div class="op-empty" style="padding:16px;">No one else has been confirmed yet.</div>` : ''}
 
@@ -1202,13 +1275,17 @@ function renderHostView(el){
             </label>
           </div>
           <div class="op-form-row">
-            <label class="op-label">Max players (includes you as host)
+            <label class="op-label">Max players
               <input class="op-input" type="number" name="max_players" min="2" max="64" value="8" />
             </label>
             <label class="op-label">Fee (optional)
               <input class="op-input" name="fee_amount" placeholder="₱300" />
             </label>
           </div>
+          <label class="op-checkbox-row">
+            <input type="checkbox" name="host_counts_toward_max" checked />
+            Count yourself as one of the max players
+          </label>
           <div class="op-form-row">
             <label class="op-label">Min rating (optional)
               <input class="op-input" type="number" step="0.1" name="skill_min" placeholder="3.0" />
@@ -1262,6 +1339,7 @@ function renderHostView(el){
         start_time,
         max_players: Number(fd.get('max_players')) || null,
         fee_amount: (fd.get('fee_amount') || '').trim() || null,
+        host_counts_toward_max: fd.get('host_counts_toward_max') === 'on',
         skill_min: fd.get('skill_min') ? Number(fd.get('skill_min')) : null,
         skill_max: fd.get('skill_max') ? Number(fd.get('skill_max')) : null,
         details: (fd.get('details') || '').trim() || null,
@@ -1535,6 +1613,34 @@ document.addEventListener('click', async function(e){
       }catch(err){
         console.error(err);
         toast(opFriendlyError(err, 'Could not update payment status.'), 'error');
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-make-sub-host': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.setSubHost(t.dataset.id, t.dataset.player, t.dataset.name, t.dataset.photo);
+        toast((t.dataset.name || 'Player') + ' is now sub host.', 'success');
+        await opRenderManageJoiners(t.dataset.id);
+      }catch(err){
+        console.error(err);
+        toast(opFriendlyError(err, 'Could not set the sub host.'), 'error');
+        t.disabled = false;
+      }
+      break;
+    }
+    case 'op-clear-sub-host': {
+      if(t.disabled) return;
+      t.disabled = true;
+      try{
+        await OpenPlayAPI.clearSubHost(t.dataset.id);
+        toast('Sub host removed.', 'success');
+        await opRenderManageJoiners(t.dataset.id);
+      }catch(err){
+        console.error(err);
+        toast(opFriendlyError(err, 'Could not remove the sub host.'), 'error');
         t.disabled = false;
       }
       break;
