@@ -419,7 +419,9 @@ const OpenPlayAPI = {
 window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
 
 /* ---------------- local UI state ---------------- */
-const opUI = { user: null, authReady: false, events: [], eventsReady: false, error: null };
+const opUI = { user: null, authReady: false, events: [], eventsReady: false, error: null,
+  // Discover tab's date filter — { preset: 'all' | 'today' | 'tomorrow' | 'week' | 'weekend' | 'date', date: 'YYYY-MM-DD' | '' }
+  discoverFilter: { preset: 'all', date: '' } };
 Object.defineProperty(opUI, 'loading', { get: function(){ return !opUI.authReady || !opUI.eventsReady; } });
 
 let opUnsubEvents = null;
@@ -596,6 +598,67 @@ function fmtWhen(iso){
   if(isNaN(d)) return iso;
   return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' }) +
     ' · ' + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+}
+
+/* ---------------- Discover: date/time filter (Reclub-style) ---------------- */
+function opLocalDateKey(d){
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function opStartOfDay(d){ const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+// Returns true if event `ev` falls within the currently-selected discover
+// date filter. Unscheduled/invalid start times always pass through so they
+// don't just vanish from the list.
+function opMatchesDiscoverFilter(ev, filter){
+  if(!ev.start_time) return true;
+  const d = new Date(ev.start_time);
+  if(isNaN(d)) return true;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const today = opStartOfDay(new Date());
+  const evDay = opStartOfDay(d);
+  switch(filter.preset){
+    case 'today':
+      return evDay.getTime() === today.getTime();
+    case 'tomorrow':
+      return evDay.getTime() === today.getTime() + dayMs;
+    case 'week': {
+      const end = new Date(today.getTime() + 7 * dayMs);
+      return evDay.getTime() >= today.getTime() && evDay.getTime() < end.getTime();
+    }
+    case 'weekend': {
+      const dow = today.getDay(); // 0 = Sun ... 6 = Sat
+      const daysUntilSat = (6 - dow + 7) % 7;
+      const sat = new Date(today.getTime() + daysUntilSat * dayMs);
+      const sun = new Date(sat.getTime() + dayMs);
+      return evDay.getTime() === sat.getTime() || evDay.getTime() === sun.getTime();
+    }
+    case 'date':
+      return !filter.date || opLocalDateKey(evDay) === filter.date;
+    default: // 'all'
+      return true;
+  }
+}
+function opDiscoverFilterBar(){
+  const f = opUI.discoverFilter;
+  const chips = [
+    { preset: 'all', label: 'All' },
+    { preset: 'today', label: 'Today' },
+    { preset: 'tomorrow', label: 'Tomorrow' },
+    { preset: 'week', label: 'This week' },
+    { preset: 'weekend', label: 'This weekend' },
+  ];
+  return `
+    <div class="op-filter-bar">
+      <div class="op-filter-chips">
+        ${chips.map(function(c){
+          return `<button type="button" class="op-filter-chip${f.preset === c.preset ? ' active' : ''}" data-action="op-discover-filter" data-preset="${c.preset}">${c.label}</button>`;
+        }).join('')}
+        <label class="op-filter-chip op-filter-chip-date${f.preset === 'date' ? ' active' : ''}">
+          📅 ${f.preset === 'date' && f.date ? esc(f.date) : 'Pick a date'}
+          <input type="date" id="opDiscoverDateInput" value="${f.preset === 'date' ? esc(f.date) : ''}" />
+        </label>
+      </div>
+    </div>
+  `;
 }
 
 const GOOGLE_G_SVG = '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34 5.1 29.3 3 24 3c-7.7 0-14.4 4.4-17.7 10.7z"/><path fill="#4CAF50" d="M24 45c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 36.6 26.7 37.5 24 37.5c-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 40.5 16.2 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.8l6.2 5.2C39.4 37.5 45 32 45 24c0-1.4-.1-2.7-.4-3.5z"/></svg>';
@@ -859,7 +922,14 @@ function renderDiscoverView(el){
     return;
   }
 
-  const events = opUI.events.filter(function(e){ return e.status === 'open'; });
+  const allOpen = opUI.events.filter(function(e){ return e.status === 'open'; });
+  const events = allOpen
+    .filter(function(e){ return opMatchesDiscoverFilter(e, opUI.discoverFilter); })
+    .sort(function(a, b){ return new Date(a.start_time || 0) - new Date(b.start_time || 0); });
+
+  const emptyMsg = allOpen.length === 0
+    ? `No open games posted yet.<br/>Be the first — tap <b>Host</b> to post one.`
+    : `No open games match this filter.<br/>Try a different date, or tap <b>All</b> to see everything.`;
 
   el.innerHTML = `
     <div class="op-wrap">
@@ -871,9 +941,10 @@ function renderDiscoverView(el){
         <button class="btn btn-primary btn-sm" data-action="tab" data-tab="host">+ Host</button>
       </div>
       ${opAuthChip()}
+      ${opDiscoverFilterBar()}
       ${events.length === 0 ? `
         <div class="op-empty">
-          No open games posted yet.<br/>Be the first — tap <b>Host</b> to post one.
+          ${emptyMsg}
         </div>
       ` : `
         <div class="op-event-list">
@@ -882,6 +953,18 @@ function renderDiscoverView(el){
       `}
     </div>
   `;
+
+  const dateInput = document.getElementById('opDiscoverDateInput');
+  if(dateInput){
+    dateInput.addEventListener('change', function(){
+      if(dateInput.value){
+        opUI.discoverFilter = { preset: 'date', date: dateInput.value };
+      } else {
+        opUI.discoverFilter = { preset: 'all', date: '' };
+      }
+      renderActiveView();
+    });
+  }
 }
 
 function opEventCard(ev){
@@ -1643,6 +1726,11 @@ document.addEventListener('click', async function(e){
         toast(opFriendlyError(err, 'Could not remove the sub host.'), 'error');
         t.disabled = false;
       }
+      break;
+    }
+    case 'op-discover-filter': {
+      opUI.discoverFilter = { preset: t.dataset.preset, date: '' };
+      renderActiveView();
       break;
     }
     case 'op-share-event': {
