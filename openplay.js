@@ -669,6 +669,10 @@ function opAuthFormHtml(formId, mode, tabAction){
       <label class="op-label">Password
         <input class="op-input" type="password" name="password" autocomplete="${isRegister ? 'new-password' : 'current-password'}" placeholder="At least 6 characters" required minlength="6" />
       </label>
+      ${isRegister ? `
+      <label class="op-label">Confirm password
+        <input class="op-input" type="password" name="confirm_password" autocomplete="new-password" placeholder="Retype your password" required minlength="6" />
+      </label>` : ''}
       <div class="op-auth-error" id="${formId}Error"></div>
       <button type="submit" class="btn btn-primary btn-block">${isRegister ? 'Create account' : 'Sign in'}</button>
     </form>`;
@@ -709,6 +713,13 @@ async function opSubmitAuthForm(form, errEl, mode, onSuccess){
   const submitBtn = form.querySelector('button[type="submit"]');
   const busyLabel = mode === 'register' ? 'Creating\u2026' : 'Signing in\u2026';
   const idleLabel = mode === 'register' ? 'Create account' : 'Sign in';
+  if(mode === 'register'){
+    const confirmPassword = fd.get('confirm_password') || '';
+    if(password !== confirmPassword){
+      if(errEl){ errEl.textContent = 'Passwords don\u2019t match.'; errEl.style.display = 'block'; }
+      return;
+    }
+  }
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = busyLabel; }
   try{
     const user = mode === 'register'
