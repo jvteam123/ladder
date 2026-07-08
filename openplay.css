@@ -135,7 +135,10 @@
 .op-detail-row{ font-size:14px; color:var(--text); display:flex; gap:8px; }
 .op-detail-row span{ color:var(--text-dim); }
 
-.op-detail-actions{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+.op-detail-actions{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.op-detail-actions .btn,
+.op-detail-actions .op-btn-danger{ flex:1 1 auto; min-width:clamp(120px, 40vw, 160px); }
+.op-detail-actions .op-status-note{ flex:1 1 100%; }
 
 .op-btn-danger{
   background:transparent; color:var(--loss); border:1px solid var(--loss-dim);
