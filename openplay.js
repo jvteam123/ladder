@@ -1317,8 +1317,11 @@ async function opRefreshDmUnread(force){
   opLastDmUnreadRefresh = now;
   try{
     const hostId = opUI.user.id;
+    // Messages close for good OP_POST_END_MESSAGING_WINDOW_MS after a game
+    // ends (see opMessagingClosed) — no point badging something the host
+    // can no longer open.
     const ids = opUI.events
-      .filter(function(e){ return e.host_id === hostId; })
+      .filter(function(e){ return e.host_id === hostId && !opMessagingClosed(e); })
       .map(function(e){ return e.id; });
     if(!ids.length){ opUI.unreadDmEvents = {}; return; }
     const latestMap = await DmAPI.getLatestForEvents(ids);
@@ -1394,12 +1397,13 @@ async function opRefreshChatUnread(force){
   opLastUnreadRefresh = now;
   try{
     const allIds = await ChatAPI.getMyEventIds(opUI.user.id);
-    // Ended events can't receive new chat messages, so there's no point
-    // fetching or tracking their read state — keeps the query (and the
-    // id set generally) bounded to games that are actually still live.
+    // Chat closes for good OP_POST_END_MESSAGING_WINDOW_MS after a game
+    // ends (see opMessagingClosed) — no point fetching or tracking read
+    // state past that, but it should stay tracked during the grace period
+    // right after a game ends, not cut off the instant it ends.
     const ids = allIds.filter(function(id){
       const ev = opUI.events.find(function(e){ return e.id === id; });
-      return !ev || !opIsEnded(ev);
+      return !ev || !opMessagingClosed(ev);
     });
     if(!ids.length){ opUI.unreadChatEvents = {}; return; }
     const latestMap = await ChatAPI.getLatestTimestamps(ids);
@@ -1603,6 +1607,17 @@ function opIsEnded(ev){
   const end = opEndTimeMs(ev);
   if(isNaN(end)) return false;
   return Date.now() >= end;
+}
+// Chat and DMs stay open for a short grace period after a game ends (so
+// people can still say thanks, settle up, share photos, etc.), then close
+// for good — an ended game's roster isn't going to change, so there's no
+// ongoing reason to keep messaging live indefinitely. Applies everywhere
+// the same way (Ended list or not), since it's the same underlying event.
+const OP_POST_END_MESSAGING_WINDOW_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
+function opMessagingClosed(ev){
+  const end = opEndTimeMs(ev);
+  if(isNaN(end)) return false;
+  return Date.now() >= end + OP_POST_END_MESSAGING_WINDOW_MS;
 }
 // Single source of truth for the four-state status badge: Happening and
 // Ended are time-based and take priority over the capacity-based Open/Full,
@@ -2181,20 +2196,23 @@ async function opOpenEventDetail(eventId){
   const participantsButton = canSeeParticipants
     ? `<button class="btn btn-ghost" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
-  const canChat = isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested);
+  const messagingClosed = opMessagingClosed(ev);
+  const canChat = !messagingClosed && (isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested));
   const hasUnreadChat = canChat && !!opUI.unreadChatEvents[ev.id];
   const chatButton = canChat
     ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Chat${hasUnreadChat ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New chat messages"></span>' : ''}</button>`
-    : '';
+    : (ended && messagingClosed ? `<button class="btn btn-ghost" disabled title="Chat closes 2 days after a game ends">\ud83d\udcac Chat closed</button>` : '');
   // PM the host: anyone holding a live-or-was-live rsvp (confirmed or
   // waitlist) can start a private thread with the host. The host instead
   // gets a "Messages" button that lists every thread on this event.
-  const hasUnreadDm = isHost && !!opUI.unreadDmEvents[ev.id];
-  const dmButton = isHost
-    ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages${hasUnreadDm ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New message"></span>' : ''}</button>`
-    : (!isSubHost && !!myRsvp
-      ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host</button>`
-      : '');
+  const hasUnreadDm = isHost && !messagingClosed && !!opUI.unreadDmEvents[ev.id];
+  const dmButton = messagingClosed
+    ? (ended && (isHost || (!isSubHost && !!myRsvp)) ? `<button class="btn btn-ghost" disabled title="Messages close 2 days after a game ends">\u2709\ufe0f Messages closed</button>` : '')
+    : (isHost
+      ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages${hasUnreadDm ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New message"></span>' : ''}</button>`
+      : (!isSubHost && !!myRsvp
+        ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host</button>`
+        : ''));
 
   openModal(`
     <div class="modal-title">${esc(ev.title)}</div>
@@ -2382,6 +2400,10 @@ function opChatMessageEl(m, isMine){
 async function opRenderEventChat(eventId){
   const ev = opUI.events.find(function(e){ return e.id === eventId; });
   if(!ev) return;
+  if(opMessagingClosed(ev)){
+    openModal(`<div class="modal-title">Chat</div><div class="op-empty" style="padding:24px;">Chat closed 2 days after this game ended.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
   if(!opUI.user){
     opOpenAuthModal('join the chat', function(){ opRenderEventChat(eventId); });
     return;
@@ -2711,6 +2733,10 @@ function opDmBubbleHtml(m, isMine){
 async function opRenderDmThreadList(eventId){
   const ev = opUI.events.find(function(e){ return e.id === eventId; });
   if(!ev || !opUI.user || ev.host_id !== opUI.user.id) return;
+  if(opMessagingClosed(ev)){
+    openModal(`<div class="modal-title">Messages</div><div class="op-empty" style="padding:24px;">Messages closed 2 days after this game ended.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
   openModal(`<div class="modal-title">Messages</div><div class="op-empty" style="padding:24px;">Loading\u2026</div>`);
   if(!sbReady()){
     openModal(`<div class="modal-title">Messages</div><div class="op-empty">Messaging isn\u2019t available right now.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
@@ -2773,6 +2799,10 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
   if(!ev || !opUI.user) return;
   const isHost = ev.host_id === opUI.user.id;
   if(!isHost && opUI.user.id !== participantId) return; // only the two parties belong here
+  if(opMessagingClosed(ev)){
+    openModal(`<div class="modal-title">Messages</div><div class="op-empty" style="padding:24px;">Messages closed 2 days after this game ended.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
   const backAction = isHost
     ? `<button class="btn btn-ghost btn-block" data-action="op-open-dm-list" data-id="${ev.id}" style="margin-top:8px;">Back to messages</button>`
     : `<button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>`;
