@@ -27,6 +27,7 @@ const DEVICES_COL = 'deviceRegistrations';
 const MAX_OPEN_EVENTS_PER_HOST = 2;   // "spam hosting" guard
 const MAX_PAST_EVENTS_PER_HOST = 2;   // auto-pruned, oldest-first
 const MAX_ACCOUNTS_PER_DEVICE  = 2;   // "spam registration" guard
+const MAX_GUESTS_PER_JOIN = 4;        // extra named players one joiner can bring per request
 const USERNAME_EMAIL_SUFFIX = '@ladder-users.local'; // synthetic email so Firebase's email/password auth can be driven by a plain username
 
 function fbReady(){ return !!(window.fbAuth && window.fbDb); }
@@ -350,6 +351,26 @@ const DmAPI = {
       threads.push(m);
     });
     return threads;
+  },
+  // Bulk helper for the DM-unread-badge feature (see "DM UNREAD TRACKING"
+  // below): latest message overall per event id (across every
+  // participant thread on that event), plus who sent it — so the caller
+  // can tell "new since I last looked, and not just my own reply".
+  async getLatestForEvents(eventIds){
+    if(!sbReady() || !eventIds || !eventIds.length) return {};
+    const results = await Promise.all(eventIds.map(async function(id){
+      const { data, error } = await sbClient
+        .from(DM_TABLE)
+        .select('created_at, sender_id')
+        .eq('event_id', id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if(error){ console.error('[dm] getLatestForEvents failed for', id, error); return null; }
+      return (data && data[0]) ? data[0] : null;
+    }));
+    const map = {};
+    eventIds.forEach(function(id, i){ if(results[i]) map[id] = results[i]; });
+    return map;
   },
   subscribe(eventId, participantId, onInsert, channelSuffix){
     if(!sbReady()) return null;
@@ -1000,6 +1021,49 @@ const OpenPlayAPI = {
     DmEligibility.add(eventId, user.id, user.display_name, user.avatar_url);
     return resultStatus;
   },
+  // Adds one named "plus one" the joining player is bringing along. This
+  // is its own RSVP doc (own waitlist entry, own confirm/remove buttons in
+  // Manage Participants) rather than bundled into the inviting player's
+  // spot, because the host confirms/removes each person individually —
+  // exactly like a normal joiner, just tagged with who vouched for them.
+  // Guests have no Firebase account of their own, so they never sign in,
+  // chat, or DM — this is a named placeholder on the roster until the
+  // host acts on it. player_id is a synthetic id, never a real uid.
+  async addGuestRsvp(eventId, invitedByUser, guestName){
+    const guestId = 'guest_' + invitedByUser.id + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, guestId));
+    await rsvpRef.set({
+      event_id: eventId,
+      player_id: guestId,
+      player_name: guestName,
+      player_photo_url: null,
+      status: 'waitlist',
+      paid: false,
+      is_guest: true,
+      invited_by: invitedByUser.id,
+      invited_by_name: invitedByUser.display_name || 'a player',
+      created_at: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    return guestId;
+  },
+  // Joins the event for the signed-in user, then adds one guest RSVP per
+  // non-empty name supplied (capped at MAX_GUESTS_PER_JOIN — extras are
+  // silently dropped, since the UI itself won't let more than that many
+  // fields exist). Guest adds run after the real rsvp succeeds and are
+  // best-effort per name: if one fails, the rest still get tried, since
+  // the person's own spot is already secured either way.
+  async rsvpWithGuests(eventId, user, guestNames){
+    const status = await OpenPlayAPI.rsvp(eventId, user);
+    const names = (guestNames || [])
+      .map(function(n){ return (n || '').trim(); })
+      .filter(Boolean)
+      .slice(0, MAX_GUESTS_PER_JOIN);
+    for(const name of names){
+      try{ await OpenPlayAPI.addGuestRsvp(eventId, user, name); }
+      catch(err){ console.error('[rsvp] could not add guest', name, err); }
+    }
+    return status;
+  },
   // Player REQUESTS to leave — this no longer cancels the spot outright.
   // It just flags the rsvp so the host sees it in Manage joiners and can
   // approve it (which is what actually frees the seat).
@@ -1144,6 +1208,11 @@ window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
 const opUI = { user: null, authReady: false, events: [], eventsReady: false, error: null,
   // Discover tab's date filter — { preset: 'all' | 'today' | 'tomorrow' | 'week' | 'weekend' | 'date', date: 'YYYY-MM-DD' | '' }
   discoverFilter: { preset: 'all', date: '' },
+  // eventId -> true for every event this signed-in user hosts that has a
+  // private message (DM) from a participant they haven't opened yet. See
+  // the "DM UNREAD TRACKING" section below — same shape/pattern as
+  // unreadChatEvents, just scoped to the host's own "Messages" button.
+  unreadDmEvents: {},
   // eventId -> true for every chat-enabled event (hosted, sub-hosted, or
   // joined) that has messages the signed-in user hasn't opened yet. See
   // the "CHAT UNREAD TRACKING" section below.
@@ -1204,6 +1273,70 @@ function opEnsureHistoryIds(){
     opHistoryIdsLoadedFor = null; // allow a retry on the next visit
     maybeRerenderOpenPlay();
   });
+}
+
+/* ---------------- DM UNREAD TRACKING ----------------
+   Puts a small notification dot on the host's "Messages" button (and on
+   their event cards) when one of their events has a private message from
+   a participant that they haven't opened yet. Scoped to hosts only, since
+   that's the "Messages" inbox — a participant's own "Message host" thread
+   is just one conversation they're already looking at when they open it.
+
+   Read state is tracked per (host, event) in localStorage, same as chat —
+   purely a "have I looked" marker, no cross-device sync needed. */
+const OP_DM_READ_PREFIX = 'op_dm_read:';
+function opDmReadKey(eventId, userId){ return OP_DM_READ_PREFIX + userId + ':' + eventId; }
+function opGetDmLastRead(eventId){
+  if(!opUI.user) return null;
+  try{ return localStorage.getItem(opDmReadKey(eventId, opUI.user.id)); }
+  catch(err){ return null; }
+}
+function opMarkDmRead(eventId, iso){
+  if(!opUI.user) return;
+  try{ localStorage.setItem(opDmReadKey(eventId, opUI.user.id), iso || new Date().toISOString()); }
+  catch(err){ /* private browsing / storage full — badge just won't persist across reloads */ }
+  if(opUI.unreadDmEvents[eventId]) delete opUI.unreadDmEvents[eventId];
+}
+
+// Refetches, for every event this user hosts, whether there's a DM newer
+// than what they've last read — same throttled/poll-based shape as
+// opRefreshChatUnread, for the same reasons (no realtime subscription
+// just for a badge).
+let opDmUnreadRefreshInFlight = false;
+let opLastDmUnreadRefresh = 0;
+async function opRefreshDmUnread(force){
+  if(!opUI.user || !sbReady()){
+    opUI.unreadDmEvents = {};
+    return;
+  }
+  if(!force && typeof document !== 'undefined' && document.hidden) return;
+  const now = Date.now();
+  if(!force && now - opLastDmUnreadRefresh < 20000) return; // throttle
+  if(opDmUnreadRefreshInFlight) return;
+  opDmUnreadRefreshInFlight = true;
+  opLastDmUnreadRefresh = now;
+  try{
+    const hostId = opUI.user.id;
+    const ids = opUI.events
+      .filter(function(e){ return e.host_id === hostId; })
+      .map(function(e){ return e.id; });
+    if(!ids.length){ opUI.unreadDmEvents = {}; return; }
+    const latestMap = await DmAPI.getLatestForEvents(ids);
+    const unread = {};
+    ids.forEach(function(id){
+      const latest = latestMap[id];
+      if(!latest) return;
+      if(latest.sender_id === hostId) return; // last word was ours — nothing new to see
+      const lastRead = opGetDmLastRead(id);
+      if(!lastRead || new Date(latest.created_at) > new Date(lastRead)) unread[id] = true;
+    });
+    opUI.unreadDmEvents = unread;
+  }catch(err){
+    console.error('[dm] unread refresh failed', err);
+  }finally{
+    opDmUnreadRefreshInFlight = false;
+    maybeRerenderOpenPlay();
+  }
 }
 
 /* ---------------- CHAT UNREAD TRACKING ----------------
@@ -1293,14 +1426,14 @@ async function opRefreshChatUnread(force){
 // once the assumed duration passes) would only ever show up after some
 // unrelated rerender happened to fire. Poll once a minute instead so the
 // Discover badges stay accurate on their own while the tab is open.
-setInterval(function(){ maybeRerenderOpenPlay(); opRefreshChatUnread(); }, 60 * 1000);
+setInterval(function(){ maybeRerenderOpenPlay(); opRefreshChatUnread(); opRefreshDmUnread(); }, 60 * 1000);
 
 // opRefreshChatUnread() no-ops while the tab is hidden (see above), so
 // catch up immediately on refocus rather than waiting up to a minute for
 // the next poll tick.
 if(typeof document !== 'undefined'){
   document.addEventListener('visibilitychange', function(){
-    if(!document.hidden) opRefreshChatUnread(true);
+    if(!document.hidden){ opRefreshChatUnread(true); opRefreshDmUnread(true); }
   });
 }
 
@@ -1365,10 +1498,12 @@ function opBootReady(){
     opUI.authReady = true;
     if(signedOut){
       opUI.unreadChatEvents = {};
+      opUI.unreadDmEvents = {};
       opUI.historyParticipantIds = null;
       opHistoryIdsLoadedFor = null;
     } else if(user){
       opRefreshChatUnread(true);
+      opRefreshDmUnread(true);
     }
     maybeRerenderOpenPlay();
   });
@@ -1851,6 +1986,7 @@ function renderDiscoverView(el){
   }
 
   opRefreshChatUnread(); // throttled — cheap to call on every render
+  opRefreshDmUnread(); // throttled — cheap to call on every render
 
   // status === 'open' just means the host hasn't cancelled it — it stays
   // 'open' forever unless they do, so we also need to check the time-based
@@ -1978,9 +2114,11 @@ function opEventCard(ev){
   const badge = OP_STATUS_BADGES[opEventStatus(ev)];
   // Lit when this event's chat has messages the current user (host, sub
   // host, or confirmed joiner) hasn't opened yet — see "CHAT UNREAD
-  // TRACKING" above.
-  const unreadDot = opUI.unreadChatEvents[ev.id]
-    ? `<span class="op-chat-unread-dot" title="New chat messages"></span>` : '';
+  // TRACKING" above. Also lit when the host has an unread private message
+  // on this event — see "DM UNREAD TRACKING" above.
+  const hasUnread = !!opUI.unreadChatEvents[ev.id] || !!opUI.unreadDmEvents[ev.id];
+  const unreadDot = hasUnread
+    ? `<span class="op-chat-unread-dot" title="New messages"></span>` : '';
   return `
     <div class="op-card" data-action="op-open-event" data-id="${ev.id}">
       <div class="op-card-top">
@@ -2030,7 +2168,7 @@ async function opOpenEventDetail(eventId){
   } else if(!opUI.user){
     actionButton = `<button class="btn btn-primary" data-action="op-sign-in-to-join" data-id="${ev.id}">${full ? 'Sign in to Join Waitlist' : 'Sign in to Request to Join'}</button>`;
   } else {
-    actionButton = `<button class="btn btn-primary" data-action="op-join-event" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
+    actionButton = `<button class="btn btn-primary" data-action="op-open-join-request" data-id="${ev.id}">${full ? 'Join Waitlist' : 'Request to Join'}</button>`;
   }
   const subHostButton = isSubHost
     ? `<button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${ev.id}">Manage Participants (sub host)</button>`
@@ -2051,8 +2189,9 @@ async function opOpenEventDetail(eventId){
   // PM the host: anyone holding a live-or-was-live rsvp (confirmed or
   // waitlist) can start a private thread with the host. The host instead
   // gets a "Messages" button that lists every thread on this event.
+  const hasUnreadDm = isHost && !!opUI.unreadDmEvents[ev.id];
   const dmButton = isHost
-    ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages</button>`
+    ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages${hasUnreadDm ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New message"></span>' : ''}</button>`
     : (!isSubHost && !!myRsvp
       ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host</button>`
       : '');
@@ -2080,6 +2219,81 @@ async function opOpenEventDetail(eventId){
       <button class="btn btn-ghost" data-action="modal-close">Close</button>
     </div>
   `);
+}
+
+/* ---------------- JOIN REQUEST (bring extra players) ---------------- */
+// "Request to Join" opens here first instead of RSVP'ing immediately, so
+// a player can optionally list other people they're bringing by name.
+// Each name becomes its own waitlist entry (see OpenPlayAPI.addGuestRsvp)
+// that the host reviews and confirms one at a time in Manage Participants,
+// same as any other joiner — just tagged "Guest of {inviter}" there so
+// the host knows who vouched for them.
+function opGuestFieldRowHtml(){
+  return `<div class="op-form-row" style="align-items:center; margin-bottom:8px;">
+    <input type="text" class="op-input op-guest-input" style="margin-bottom:0;" placeholder="Player name" maxlength="60" />
+    <button type="button" class="op-mini-btn op-mini-btn-danger" data-guest-remove style="flex:none;">Remove</button>
+  </div>`;
+}
+
+function opRenderJoinRequestModal(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev || !opUI.user) return;
+  const full = opIsFull(ev);
+  const verb = full ? 'Join Waitlist' : 'Request to Join';
+
+  openModal(`
+    <div class="modal-title">${verb}</div>
+    <div class="modal-sub">${esc(ev.title)}</div>
+    <form id="opJoinRequestForm" class="op-form">
+      <div class="op-detail-row" style="margin-bottom:10px;">You <span>\u2014 ${esc(opUI.user.display_name || 'signed in player')}</span></div>
+      <label class="op-label">Bringing anyone else? (optional)</label>
+      <div id="opGuestFields"></div>
+      <button type="button" class="btn btn-ghost" id="opAddGuestBtn" style="margin-bottom:12px;">+ Add a player</button>
+      <div class="op-h-sub" style="margin:-6px 0 12px;">Each name you add waits for the host to confirm separately, same as your own spot.</div>
+      <button type="submit" class="btn btn-primary btn-block" id="opJoinSubmitBtn">${verb}</button>
+    </form>
+    <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>
+  `);
+
+  const fieldsEl = document.getElementById('opGuestFields');
+  const addBtn = document.getElementById('opAddGuestBtn');
+  function guestInputs(){ return fieldsEl ? Array.from(fieldsEl.querySelectorAll('.op-guest-input')) : []; }
+  function refreshAddBtn(){ if(addBtn) addBtn.style.display = guestInputs().length >= MAX_GUESTS_PER_JOIN ? 'none' : ''; }
+  function addGuestField(){
+    if(guestInputs().length >= MAX_GUESTS_PER_JOIN || !fieldsEl) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = opGuestFieldRowHtml();
+    const row = wrap.firstElementChild;
+    fieldsEl.appendChild(row);
+    const removeBtn = row.querySelector('[data-guest-remove]');
+    if(removeBtn) removeBtn.addEventListener('click', function(){ row.remove(); refreshAddBtn(); });
+    const input = row.querySelector('.op-guest-input');
+    if(input) input.focus();
+    refreshAddBtn();
+  }
+  if(addBtn) addBtn.addEventListener('click', addGuestField);
+
+  const form = document.getElementById('opJoinRequestForm');
+  if(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const submitBtn = document.getElementById('opJoinSubmitBtn');
+      if(submitBtn) submitBtn.disabled = true;
+      const guestNames = guestInputs().map(function(i){ return i.value; });
+      try{
+        const status = await OpenPlayAPI.rsvpWithGuests(eventId, opUI.user, guestNames);
+        const guestCount = guestNames.map(function(n){ return (n || '').trim(); }).filter(Boolean).length;
+        const guestNote = guestCount ? ` +${guestCount} more waiting on the host\u2019s confirmation.` : '';
+        toast((status === 'confirmed' ? "You're in! RSVP confirmed." : 'Request sent \u2014 the host will confirm your spot.') + guestNote, 'success');
+        closeModal();
+        renderActiveView();
+      }catch(err){
+        console.error(err);
+        toast(opFriendlyError(err, 'Could not send your request. Please try again.'), 'error');
+        if(submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
 }
 
 /* ---------------- CHAT VIEW ---------------- */
@@ -2441,6 +2655,7 @@ async function opRenderParticipants(eventId){
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
         ${isSubHost ? '<span class="op-badge op-badge-subhost">Sub host</span>' : ''}
+        ${r.is_guest ? `<span class="op-badge op-badge-muted">Guest of ${esc(r.invited_by_name || 'a player')}</span>` : ''}
       </div>`;
   }
 
@@ -2519,6 +2734,9 @@ async function opRenderDmThreadList(eventId){
   const namesById = {};
   eligible.forEach(function(p){ namesById[p.user_id] = { name: p.user_name, photo: p.avatar_url }; });
 
+  // Host is looking at the message list now — clear this event's DM badge.
+  opMarkDmRead(eventId);
+
   function threadRow(m){
     const known = namesById[m.participant_id] || {};
     const name = known.name || (m.sender_id === m.participant_id ? m.sender_name : 'Player');
@@ -2559,6 +2777,7 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
     ? `<button class="btn btn-ghost btn-block" data-action="op-open-dm-list" data-id="${ev.id}" style="margin-top:8px;">Back to messages</button>`
     : `<button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>`;
   const headerName = isHost ? (participantName || 'Player') : (ev.host_name || 'Host');
+  if(isHost) opMarkDmRead(eventId); // looking at a thread on this event now — clear the badge
 
   opDmCleanup();
 
@@ -2582,6 +2801,7 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
 
   function appendMessage(m){
     if(!listEl) return;
+    if(isHost) opMarkDmRead(eventId, m.created_at); // already looking at it — never badge this one
     const nearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 60;
     const emptyNote = listEl.querySelector('.op-empty');
     if(emptyNote) emptyNote.remove();
@@ -2777,6 +2997,7 @@ async function opRenderManageJoiners(eventId){
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
         <div class="op-joiner-actions">
           ${isSubHost ? '<span class="op-badge op-badge-subhost">Sub host</span>' : ''}
+          ${r.is_guest ? `<span class="op-badge op-badge-muted">Guest of ${esc(r.invited_by_name || 'a player')}</span>` : ''}
           ${r.leave_requested ? `<span class="op-badge op-badge-leave">Wants to leave</span><button class="op-mini-btn op-mini-btn-danger" data-action="op-approve-leave" data-id="${ev.id}" data-player="${esc(r.player_id)}">Approve leave</button>` : ''}
           ${opts.showPaid ? `<button class="op-mini-btn ${isPaid ? 'op-mini-btn-paid' : 'op-mini-btn-unpaid'}" data-action="op-toggle-paid" data-id="${ev.id}" data-player="${esc(r.player_id)}" data-paid="${isPaid ? '1' : '0'}">${isPaid ? 'Paid' : 'Unpaid'}</button>` : ''}
           ${opts.confirmable ? `<button class="op-mini-btn op-mini-btn-primary" data-action="op-confirm-joiner" data-id="${ev.id}" data-player="${esc(r.player_id)}">Confirm</button>` : ''}
@@ -2948,6 +3169,7 @@ function renderHostView(el){
   opCleanupOldPastEvents().then(function(deletedAny){ if(deletedAny) maybeRerenderOpenPlay(); });
 
   opRefreshChatUnread(); // throttled — cheap to call on every render
+  opRefreshDmUnread(); // throttled — cheap to call on every render
 
   const mine = opUI.events.filter(function(e){ return e.host_id === opUI.user.id; });
   // status === 'open' only reflects whether the host has cancelled the
@@ -3216,6 +3438,10 @@ document.addEventListener('click', async function(e){
     }
     case 'op-open-chat': {
       await opRenderEventChat(t.dataset.id);
+      break;
+    }
+    case 'op-open-join-request': {
+      opRenderJoinRequestModal(t.dataset.id);
       break;
     }
     case 'op-join-event': {
