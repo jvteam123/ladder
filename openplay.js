@@ -71,7 +71,20 @@ const SUPABASE_URL = 'https://wxnjlhmqbgxhsnmcjyzi.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4bmpsaG1xYmd4aHNubWNqeXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MzU3MzcsImV4cCI6MjA5OTExMTczN30.HOkM0L36F-L80LMqjrZxXFtt0DopXvh4BsLNjn7FAtQ';
 const CHAT_TABLE = 'open_play_chat_messages';
 const MEMBERSHIP_TABLE = 'open_play_confirmed_participants';
-const CHAT_HISTORY_LIMIT = 200;
+// Mirrors the server-side prune trigger (see SQL below), which physically
+// deletes anything past the 100 newest rows for an event — so there's
+// never more than 100 to load anyway.
+const CHAT_HISTORY_LIMIT = 100;
+// A message can only be edited within this long of being sent. Also
+// enforced server-side by the "author can edit within 1 minute" RLS
+// policy below, so an expired edit attempt just comes back as an error.
+const CHAT_EDIT_WINDOW_MS = 60 * 1000;
+// Per user, per event — mirrors the Storage insert policy below, which is
+// the real (server-side) enforcement of this cap.
+const CHAT_MAX_ATTACHMENTS_PER_USER = 3;
+const CHAT_ATTACHMENT_BUCKET = 'open-play-chat-attachments';
+const CHAT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // mirrors the bucket's file_size_limit
+const CHAT_ATTACHMENT_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf';
 
 let sbClient = null;
 function sbReady(){
@@ -93,31 +106,112 @@ const ChatAPI = {
     if(error){ console.error('[chat] load failed', error); return []; }
     return data || [];
   },
-  async send(eventId, user, body){
+  // `attachment`, if given, is { url, name, type, size } from
+  // uploadAttachment() below. `body` may be empty for an attachment-only
+  // message (the DB check constraint requires at least one of the two).
+  async send(eventId, user, body, attachment){
     if(!sbReady()) throw new Error('Chat isn\u2019t available right now.');
-    const { error } = await sbClient.from(CHAT_TABLE).insert({
+    const { data, error } = await sbClient.from(CHAT_TABLE).insert({
       event_id: String(eventId),
       user_id: user.id,
       user_name: user.display_name || 'Player',
       avatar_url: user.avatar_url || null,
-      body: body,
-    });
+      body: body || '',
+      attachment_url: attachment ? attachment.url : null,
+      attachment_name: attachment ? attachment.name : null,
+      attachment_type: attachment ? attachment.type : null,
+      attachment_size: attachment ? attachment.size : null,
+    }).select().single();
     if(error) throw error;
+    return data;
   },
-  // Subscribes to new inserts for one event's chat. Returns a channel
-  // handle to pass to unsubscribe() when the chat view closes.
-  subscribe(eventId, onInsert){
+  // Only allowed within CHAT_EDIT_WINDOW_MS of sending — also enforced
+  // server-side (see "author can edit within 1 minute" policy below).
+  async edit(messageId, newBody){
+    if(!sbReady()) throw new Error('Chat isn\u2019t available right now.');
+    const { data, error } = await sbClient
+      .from(CHAT_TABLE)
+      .update({ body: newBody, edited_at: new Date().toISOString() })
+      .eq('id', messageId)
+      .select()
+      .single();
+    if(error) throw error;
+    return data;
+  },
+  // "Unsend" is a soft delete: the row stays (so the thread doesn't
+  // reflow for everyone else) but body/attachment are cleared and
+  // `deleted` flips true; the UI renders that as "Message deleted".
+  async unsend(messageId){
+    if(!sbReady()) throw new Error('Chat isn\u2019t available right now.');
+    const { data, error } = await sbClient
+      .from(CHAT_TABLE)
+      .update({ deleted: true, body: '', attachment_url: null, attachment_name: null, attachment_type: null, attachment_size: null })
+      .eq('id', messageId)
+      .select()
+      .single();
+    if(error) throw error;
+    return data;
+  },
+  // Subscribes to inserts (new messages) AND updates (edits/unsends) for
+  // one event's chat. `handlers` is { onInsert, onUpdate }. Returns a
+  // channel handle to pass to unsubscribe() when the chat view closes.
+  subscribe(eventId, handlers){
     if(!sbReady()) return null;
     return sbClient
       .channel('open-play-chat-' + eventId)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: CHAT_TABLE,
         filter: 'event_id=eq.' + eventId,
-      }, function(payload){ onInsert(payload.new); })
+      }, function(payload){ if(handlers.onInsert) handlers.onInsert(payload.new); })
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: CHAT_TABLE,
+        filter: 'event_id=eq.' + eventId,
+      }, function(payload){ if(handlers.onUpdate) handlers.onUpdate(payload.new); })
       .subscribe();
   },
   unsubscribe(channel){
     if(channel && sbClient) sbClient.removeChannel(channel);
+  },
+
+  // How many (non-deleted) attachments this user has already posted in
+  // this event's chat — checked before even opening the file picker so
+  // the UI can head off a 4th upload with a friendly message. The real
+  // limit is enforced regardless by the Storage insert policy below.
+  async getMyAttachmentCount(eventId, userId){
+    if(!sbReady() || !userId) return 0;
+    const { count, error } = await sbClient
+      .from(CHAT_TABLE)
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', String(eventId))
+      .eq('user_id', userId)
+      .eq('deleted', false)
+      .not('attachment_url', 'is', null);
+    if(error){ console.error('[chat] getMyAttachmentCount failed', error); return 0; }
+    return count || 0;
+  },
+
+  // Uploads one file to the chat-attachments bucket and returns
+  // { url, name, type, size } to hand to send(). Path is
+  // "<event_id>/<user_id>/<timestamp>_<filename>" so the Storage
+  // policies below can read the event/user straight out of the path —
+  // same trick as ChatMembership, no verified server-side identity here.
+  async uploadAttachment(eventId, userId, file){
+    if(!sbReady()) throw new Error('Attachments aren\u2019t available right now.');
+    if(file.size > CHAT_MAX_ATTACHMENT_BYTES) throw new Error('That file is too big \u2014 max 5MB.');
+    const safeName = file.name.replace(/[^a-zA-Z0-9_.\-]/g, '_').slice(-80);
+    const path = `${eventId}/${userId}/${Date.now()}_${safeName}`;
+    const { error: uploadErr } = await sbClient.storage
+      .from(CHAT_ATTACHMENT_BUCKET)
+      .upload(path, file, { contentType: file.type || 'application/octet-stream' });
+    if(uploadErr){
+      // The Storage insert policy rejects a 4th file from the same user
+      // in the same event — surface that as a friendly limit message
+      // instead of a raw Postgres/Storage error.
+      if(/polic/i.test(uploadErr.message || '')) throw new Error(`You\u2019ve reached the ${CHAT_MAX_ATTACHMENTS_PER_USER}-file limit for this game\u2019s chat.`);
+      throw uploadErr;
+    }
+    const { data: pub } = sbClient.storage.from(CHAT_ATTACHMENT_BUCKET).getPublicUrl(path);
+    return { url: pub.publicUrl, name: file.name, type: file.type || 'application/octet-stream', size: file.size };
   },
 
   // Bulk helpers for the unread-chat-badge feature (see the "CHAT UNREAD
@@ -206,11 +300,31 @@ create table if not exists open_play_chat_messages (
   user_id text not null,
   user_name text not null,
   avatar_url text,
-  body text not null check (char_length(body) between 1 and 500),
+  body text not null default '',
+  edited_at timestamptz,
+  deleted boolean not null default false,
+  attachment_url text,
+  attachment_name text,
+  attachment_type text,
+  attachment_size bigint,
   created_at timestamptz not null default now()
 );
 create index if not exists open_play_chat_messages_event_idx
   on open_play_chat_messages (event_id, created_at);
+
+-- If this table already existed from before edit/unsend/attachments were
+-- added, run this block to bring it up to date (safe to re-run):
+alter table open_play_chat_messages
+  add column if not exists edited_at timestamptz,
+  add column if not exists deleted boolean not null default false,
+  add column if not exists attachment_url text,
+  add column if not exists attachment_name text,
+  add column if not exists attachment_type text,
+  add column if not exists attachment_size bigint;
+alter table open_play_chat_messages alter column body drop not null;
+alter table open_play_chat_messages alter column body set default '';
+update open_play_chat_messages set body = '' where body is null;
+alter table open_play_chat_messages alter column body set not null;
 
 create table if not exists open_play_confirmed_participants (
   event_id text not null,
@@ -225,16 +339,31 @@ create table if not exists open_play_confirmed_participants (
 alter table open_play_chat_messages enable row level security;
 alter table open_play_confirmed_participants enable row level security;
 
+-- A "live" (non-deleted) message needs a body and/or an attachment; a
+-- deleted one is allowed an empty body (that's what unsend clears it to).
+alter table open_play_chat_messages drop constraint if exists open_play_chat_messages_body_check;
+alter table open_play_chat_messages add constraint open_play_chat_messages_body_check check (
+  deleted = true
+  or (
+    char_length(coalesce(body,'')) <= 500
+    and (char_length(coalesce(body,'')) > 0 or attachment_url is not null)
+  )
+);
+
 -- Reads stay open to anyone who has the event id (same limitation as
 -- before: there's no verified identity to restrict reads by).
+drop policy if exists "anyone can read chat" on open_play_chat_messages;
 create policy "anyone can read chat" on open_play_chat_messages
   for select using (true);
 
--- Writes now require the (event_id, user_id) pair to be a confirmed
+-- Writes require the (event_id, user_id) pair to be a confirmed
 -- participant — this is the actual "host has to confirm you" gate.
+drop policy if exists "confirmed participants can post chat" on open_play_chat_messages;
 create policy "confirmed participants can post chat" on open_play_chat_messages
   for insert with check (
-    char_length(body) between 1 and 500
+    deleted = false
+    and char_length(coalesce(body,'')) <= 500
+    and (char_length(coalesce(body,'')) > 0 or attachment_url is not null)
     and exists (
       select 1 from open_play_confirmed_participants p
       where p.event_id = open_play_chat_messages.event_id
@@ -242,19 +371,126 @@ create policy "confirmed participants can post chat" on open_play_chat_messages
     )
   );
 
+-- Edits: only within 1 minute of created_at. Same residual limitation as
+-- the insert policy above (no verified caller identity — see the "NOTE ON
+-- AUTH" comment at the top of this file), so this checks "is (event_id,
+-- user_id) a confirmed participant", not "is the caller provably that
+-- participant".
+drop policy if exists "author can edit within 1 minute" on open_play_chat_messages;
+create policy "author can edit within 1 minute" on open_play_chat_messages
+  for update using (
+    created_at > now() - interval '1 minute'
+    and exists (
+      select 1 from open_play_confirmed_participants p
+      where p.event_id = open_play_chat_messages.event_id
+        and p.user_id = open_play_chat_messages.user_id
+    )
+  )
+  with check (
+    deleted = false
+    and char_length(coalesce(body,'')) between 1 and 500
+  );
+
+-- Unsend: no time limit, but only clearing content (deleted flips true).
+drop policy if exists "author can unsend anytime" on open_play_chat_messages;
+create policy "author can unsend anytime" on open_play_chat_messages
+  for update using (
+    exists (
+      select 1 from open_play_confirmed_participants p
+      where p.event_id = open_play_chat_messages.event_id
+        and p.user_id = open_play_chat_messages.user_id
+    )
+  )
+  with check (deleted = true);
+
 -- The membership table itself is synced by trusted client code (Firestore
 -- security rules already gate who can confirm/remove a joiner), so it's
 -- readable/writable the same way the old fully-open chat table was.
+drop policy if exists "membership readable" on open_play_confirmed_participants;
 create policy "membership readable" on open_play_confirmed_participants
   for select using (true);
+drop policy if exists "membership syncable" on open_play_confirmed_participants;
 create policy "membership syncable" on open_play_confirmed_participants
   for insert with check (true);
+drop policy if exists "membership syncable update" on open_play_confirmed_participants;
 create policy "membership syncable update" on open_play_confirmed_participants
   for update using (true);
+drop policy if exists "membership syncable delete" on open_play_confirmed_participants;
 create policy "membership syncable delete" on open_play_confirmed_participants
   for delete using (true);
 
 alter publication supabase_realtime add table open_play_chat_messages;
+
+-- Retention: keep only the 100 newest messages per event; every insert
+-- prunes anything older past that. Note this does NOT delete the
+-- corresponding Storage attachment files for pruned rows — those become
+-- orphaned objects in the bucket. Fine at small scale; if that matters
+-- later, add a scheduled Edge Function to sweep orphaned files.
+create or replace function open_play_chat_prune() returns trigger
+language plpgsql security definer as $$
+begin
+  delete from open_play_chat_messages
+  where event_id = new.event_id
+    and id not in (
+      select id from open_play_chat_messages
+      where event_id = new.event_id
+      order by created_at desc
+      limit 100
+    );
+  return null;
+end;
+$$;
+drop trigger if exists open_play_chat_prune_trigger on open_play_chat_messages;
+create trigger open_play_chat_prune_trigger
+  after insert on open_play_chat_messages
+  for each row execute function open_play_chat_prune();
+
+-- Attachments: a public Storage bucket, 5MB/file, images + PDF only.
+-- Files are stored at "<event_id>/<user_id>/<timestamp>_<filename>" so
+-- the policies below can read event/user straight out of the path.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'open-play-chat-attachments', 'open-play-chat-attachments', true, 5242880,
+  array['image/jpeg','image/png','image/gif','image/webp','application/pdf']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "chat attachments public read" on storage.objects;
+create policy "chat attachments public read" on storage.objects
+  for select using (bucket_id = 'open-play-chat-attachments');
+
+-- The actual "3 files per user per event" cap — enforced here, not just
+-- client-side, by counting existing objects under the same event/user path.
+drop policy if exists "confirmed participants can upload up to 3 files" on storage.objects;
+create policy "confirmed participants can upload up to 3 files" on storage.objects
+  for insert with check (
+    bucket_id = 'open-play-chat-attachments'
+    and exists (
+      select 1 from open_play_confirmed_participants p
+      where p.event_id = (storage.foldername(name))[1]
+        and p.user_id = (storage.foldername(name))[2]
+    )
+    and (
+      select count(*) from storage.objects o
+      where o.bucket_id = 'open-play-chat-attachments'
+        and (storage.foldername(o.name))[1] = (storage.foldername(name))[1]
+        and (storage.foldername(o.name))[2] = (storage.foldername(name))[2]
+    ) < 3
+  );
+
+drop policy if exists "authors can delete their own chat attachments" on storage.objects;
+create policy "authors can delete their own chat attachments" on storage.objects
+  for delete using (
+    bucket_id = 'open-play-chat-attachments'
+    and exists (
+      select 1 from open_play_confirmed_participants p
+      where p.event_id = (storage.foldername(name))[1]
+        and p.user_id = (storage.foldername(name))[2]
+    )
+  );
 --------------------------------------------------------------------- */
 
 // Persistent per-browser identifier used only to rate-limit how many
@@ -1165,6 +1401,12 @@ function opFriendlyError(err, fallback){
   if(err && err.code === 'permission-denied'){
     return 'Your Firestore rules don\u2019t yet allow hosts to manage joiners \u2014 see the rules snippet in the setup notes.';
   }
+  // Supabase RLS rejection (e.g. the chat edit window has closed) reads
+  // as a generic Postgres policy-violation message — swap in something
+  // an actual person can act on.
+  if(err && err.message && /row-level security/i.test(err.message)){
+    return 'That\u2019s no longer allowed \u2014 the 1-minute edit window may have passed.';
+  }
   return (err && err.message) ? err.message : fallback;
 }
 
@@ -1516,13 +1758,57 @@ function opChatTime(iso){
   }catch(err){ return ''; }
 }
 
+function opChatAttachmentHtml(m){
+  if(!m.attachment_url) return '';
+  const isImage = (m.attachment_type || '').indexOf('image/') === 0;
+  if(isImage){
+    return `<a href="${esc(m.attachment_url)}" target="_blank" rel="noopener" class="op-chat-attach-img-link">
+      <img src="${esc(m.attachment_url)}" class="op-chat-attach-img" alt="${esc(m.attachment_name || 'attachment')}" loading="lazy" />
+    </a>`;
+  }
+  return `<a href="${esc(m.attachment_url)}" target="_blank" rel="noopener" class="op-chat-attach-file">\ud83d\udcce ${esc(m.attachment_name || 'File')}</a>`;
+}
+
+// A message can be edited only by its author, only while not already
+// deleted, and only within CHAT_EDIT_WINDOW_MS of being sent — mirrors
+// the "author can edit within 1 minute" RLS policy (see SQL above), so
+// this is a UI convenience, not the real enforcement.
+function opChatCanEdit(m){
+  if(!opUI.user || !m || m.deleted || m.user_id !== opUI.user.id) return false;
+  return (Date.now() - new Date(m.created_at).getTime()) <= CHAT_EDIT_WINDOW_MS;
+}
+
+function opChatMsgActionsHtml(m){
+  const editBtn = opChatCanEdit(m)
+    ? `<button type="button" class="op-chat-msg-action" data-msg-action="edit">Edit</button>` : '';
+  return `<div class="op-chat-msg-actions">${editBtn}<button type="button" class="op-chat-msg-action op-chat-msg-action-danger" data-msg-action="delete">Unsend</button></div>`;
+}
+
+// Builds the inner HTML for one message bubble — used both for the
+// initial render and to re-render a single message in place after an
+// edit, unsend, or cancelled edit/delete confirmation.
+function opChatBubbleHtml(m, isMine){
+  if(m.deleted){
+    return `
+      ${!isMine ? `<div class="op-chat-msg-author">${esc(m.user_name || 'Player')}</div>` : ''}
+      <div class="op-chat-bubble op-chat-bubble-deleted">Message deleted</div>
+      <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
+  }
+  const editedTag = m.edited_at ? ' <span class="op-chat-edited-tag">(edited)</span>' : '';
+  const attachHtml = opChatAttachmentHtml(m);
+  const bodyHtml = m.body ? `<div class="op-chat-bubble-text">${esc(m.body)}</div>` : '';
+  return `
+    ${!isMine ? `<div class="op-chat-msg-author">${esc(m.user_name || 'Player')}</div>` : ''}
+    <div class="op-chat-bubble">${attachHtml}${bodyHtml}</div>
+    <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}${editedTag}</div>
+    ${isMine ? opChatMsgActionsHtml(m) : ''}`;
+}
+
 function opChatMessageEl(m, isMine){
   const wrap = document.createElement('div');
   wrap.className = 'op-chat-msg' + (isMine ? ' op-chat-msg-mine' : '');
-  wrap.innerHTML = `
-    ${!isMine ? `<div class="op-chat-msg-author">${esc(m.user_name || 'Player')}</div>` : ''}
-    <div class="op-chat-bubble">${esc(m.body || '')}</div>
-    <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
+  wrap.dataset.msgId = m.id;
+  wrap.innerHTML = opChatBubbleHtml(m, isMine);
   return wrap;
 }
 
@@ -1542,7 +1828,10 @@ async function opRenderEventChat(eventId){
     <div class="modal-title">${esc(ev.title)} · Chat</div>
     <div class="modal-sub">Only shown to people in this game — chat itself isn\u2019t private, see note in code</div>
     <div class="op-chat-messages" id="opChatMessages"><div class="op-empty" style="padding:24px;">Loading messages\u2026</div></div>
+    <div class="op-chat-attach-preview" id="opChatAttachPreview" style="display:none;"></div>
     <form class="op-chat-form" id="opChatForm">
+      <button type="button" class="op-chat-attach-btn" id="opChatAttachBtn" title="Attach a file (max ${CHAT_MAX_ATTACHMENTS_PER_USER} per game)">\ud83d\udcce</button>
+      <input type="file" id="opChatFileInput" accept="${CHAT_ATTACHMENT_ACCEPT}" style="display:none;" />
       <input type="text" class="op-input op-chat-input" id="opChatInput" placeholder="Message the group\u2026" maxlength="500" autocomplete="off" />
       <button type="submit" class="btn btn-primary op-chat-send">Send</button>
     </form>
@@ -1556,13 +1845,26 @@ async function opRenderEventChat(eventId){
     return;
   }
 
+  // Local store of message objects by id — lets edit/unsend/cancel
+  // re-render one bubble in place without re-fetching the whole thread.
+  const msgStore = {};
+
   function appendMessage(m){
+    msgStore[m.id] = m;
     if(!listEl) return;
     const nearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 60;
     const emptyNote = listEl.querySelector('.op-empty');
     if(emptyNote) emptyNote.remove();
     listEl.appendChild(opChatMessageEl(m, !!(opUI.user && m.user_id === opUI.user.id)));
     if(nearBottom) listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  function updateMessage(m){
+    msgStore[m.id] = m;
+    if(!listEl) return;
+    const el = listEl.querySelector('[data-msg-id="' + m.id + '"]');
+    if(!el) return;
+    el.innerHTML = opChatBubbleHtml(m, !!(opUI.user && m.user_id === opUI.user.id));
   }
 
   const messages = await ChatAPI.loadRecent(eventId);
@@ -1577,10 +1879,53 @@ async function opRenderEventChat(eventId){
     listEl.scrollTop = listEl.scrollHeight;
   }
 
-  opChatChannel = ChatAPI.subscribe(eventId, function(m){
-    appendMessage(m);
-    opMarkChatRead(eventId, m.created_at); // already looking at it — never badge this one
+  opChatChannel = ChatAPI.subscribe(eventId, {
+    onInsert: function(m){
+      appendMessage(m);
+      opMarkChatRead(eventId, m.created_at); // already looking at it — never badge this one
+    },
+    onUpdate: function(m){
+      updateMessage(m); // someone's edit/unsend landed — reflects instantly, incl. our own
+    },
   });
+
+  // ---- attachments ----
+  let myAttachmentCount = 0;
+  try{ myAttachmentCount = await ChatAPI.getMyAttachmentCount(eventId, opUI.user.id); }catch(err){ /* best effort — real cap is server-side */ }
+  let pendingAttachment = null; // File staged for the next send
+
+  const attachBtn = document.getElementById('opChatAttachBtn');
+  const fileInput = document.getElementById('opChatFileInput');
+  const previewEl = document.getElementById('opChatAttachPreview');
+
+  function renderAttachPreview(){
+    if(!previewEl) return;
+    if(!pendingAttachment){ previewEl.style.display = 'none'; previewEl.innerHTML = ''; return; }
+    previewEl.style.display = 'flex';
+    previewEl.innerHTML = `
+      <span class="op-chat-attach-preview-name">\ud83d\udcce ${esc(pendingAttachment.name)}</span>
+      <button type="button" class="op-chat-attach-remove" id="opChatAttachRemove" title="Remove">\u2715</button>`;
+    const removeBtn = document.getElementById('opChatAttachRemove');
+    if(removeBtn) removeBtn.addEventListener('click', function(){ pendingAttachment = null; renderAttachPreview(); });
+  }
+
+  if(attachBtn && fileInput){
+    attachBtn.addEventListener('click', function(){
+      if(myAttachmentCount >= CHAT_MAX_ATTACHMENTS_PER_USER){
+        toast(`You\u2019ve already shared ${CHAT_MAX_ATTACHMENTS_PER_USER} files in this game\u2019s chat \u2014 that\u2019s the limit.`, 'error');
+        return;
+      }
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', function(){
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = ''; // reset so picking the same file again still fires change
+      if(!file) return;
+      if(file.size > CHAT_MAX_ATTACHMENT_BYTES){ toast('That file is too big \u2014 max 5MB.', 'error'); return; }
+      pendingAttachment = file;
+      renderAttachPreview();
+    });
+  }
 
   const form = document.getElementById('opChatForm');
   if(form){
@@ -1588,18 +1933,112 @@ async function opRenderEventChat(eventId){
       e.preventDefault();
       const input = document.getElementById('opChatInput');
       const body = (input.value || '').trim();
-      if(!body) return;
+      if(!body && !pendingAttachment) return;
       const btn = form.querySelector('.op-chat-send');
       if(btn) btn.disabled = true;
+      if(attachBtn) attachBtn.disabled = true;
+      const savedBody = body;
+      const savedAttachment = pendingAttachment;
       input.value = '';
+      pendingAttachment = null;
+      renderAttachPreview();
       try{
-        await ChatAPI.send(eventId, opUI.user, body);
+        let attachmentPayload = null;
+        if(savedAttachment){
+          attachmentPayload = await ChatAPI.uploadAttachment(eventId, opUI.user.id, savedAttachment);
+          myAttachmentCount++;
+        }
+        await ChatAPI.send(eventId, opUI.user, savedBody, attachmentPayload);
       }catch(err){
         toast(opFriendlyError(err, 'Message didn\u2019t send \u2014 try again.'), 'error');
-        input.value = body;
+        input.value = savedBody;
+        if(savedAttachment && !/limit/i.test((err && err.message) || '')){
+          pendingAttachment = savedAttachment; // put it back unless it was the limit that failed
+          renderAttachPreview();
+        }
       }
       if(btn) btn.disabled = false;
+      if(attachBtn) attachBtn.disabled = false;
       input.focus();
+    });
+  }
+
+  // ---- edit / unsend, via delegation on the message list ----
+  if(listEl){
+    listEl.addEventListener('click', async function(e){
+      const actionBtn = e.target.closest('[data-msg-action]');
+      if(!actionBtn) return;
+      const msgEl = actionBtn.closest('[data-msg-id]');
+      if(!msgEl) return;
+      const m = msgStore[msgEl.dataset.msgId];
+      if(!m) return;
+      const action = actionBtn.dataset.msgAction;
+
+      if(action === 'edit'){
+        if(!opChatCanEdit(m)){
+          toast('You can only edit a message within 1 minute of sending it.', 'error');
+          updateMessage(m); // drop the now-stale Edit button
+          return;
+        }
+        const bubble = msgEl.querySelector('.op-chat-bubble');
+        if(!bubble) return;
+        bubble.innerHTML = `
+          <input type="text" class="op-input op-chat-edit-input" maxlength="500" value="${esc(m.body || '')}" />
+          <div class="op-chat-edit-actions">
+            <button type="button" class="op-mini-btn op-mini-btn-primary" data-msg-action="save-edit">Save</button>
+            <button type="button" class="op-mini-btn op-mini-btn-ghost" data-msg-action="cancel-edit">Cancel</button>
+          </div>`;
+        const editInput = bubble.querySelector('.op-chat-edit-input');
+        if(editInput){ editInput.focus(); editInput.setSelectionRange(editInput.value.length, editInput.value.length); }
+        return;
+      }
+
+      if(action === 'cancel-edit'){ updateMessage(m); return; }
+
+      if(action === 'save-edit'){
+        const editInput = msgEl.querySelector('.op-chat-edit-input');
+        const newBody = editInput ? editInput.value.trim() : '';
+        if(!newBody){ toast('Message can\u2019t be empty.', 'error'); return; }
+        if(!opChatCanEdit(m)){
+          toast('The 1-minute edit window has passed.', 'error');
+          updateMessage(m);
+          return;
+        }
+        actionBtn.disabled = true;
+        try{
+          const updated = await ChatAPI.edit(m.id, newBody);
+          updateMessage(updated || Object.assign({}, m, { body: newBody, edited_at: new Date().toISOString() }));
+        }catch(err){
+          toast(opFriendlyError(err, 'Couldn\u2019t save that edit.'), 'error');
+          updateMessage(m);
+        }
+        return;
+      }
+
+      if(action === 'delete'){
+        const actionsRow = msgEl.querySelector('.op-chat-msg-actions');
+        if(actionsRow){
+          actionsRow.innerHTML = `
+            <span class="op-chat-msg-action-confirm">Unsend this message?</span>
+            <button type="button" class="op-mini-btn op-mini-btn-danger" data-msg-action="confirm-delete">Yes, unsend</button>
+            <button type="button" class="op-mini-btn op-mini-btn-ghost" data-msg-action="cancel-delete">Cancel</button>`;
+        }
+        return;
+      }
+
+      if(action === 'cancel-delete'){ updateMessage(m); return; }
+
+      if(action === 'confirm-delete'){
+        actionBtn.disabled = true;
+        try{
+          const updated = await ChatAPI.unsend(m.id);
+          updateMessage(updated || Object.assign({}, m, { deleted: true, body: '', attachment_url: null }));
+        }catch(err){
+          toast(opFriendlyError(err, 'Couldn\u2019t unsend that message.'), 'error');
+          updateMessage(m);
+        }
+        return;
+      }
     });
   }
 }
