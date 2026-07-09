@@ -353,23 +353,41 @@ const DmAPI = {
     return threads;
   },
   // Bulk helper for the DM-unread-badge feature (see "DM UNREAD TRACKING"
-  // below): latest message overall per event id (across every
-  // participant thread on that event), plus who sent it — so the caller
-  // can tell "new since I last looked, and not just my own reply".
-  async getLatestForEvents(eventIds){
-    if(!sbReady() || !eventIds || !eventIds.length) return {};
-    const results = await Promise.all(eventIds.map(async function(id){
-      const { data, error } = await sbClient
-        .from(DM_TABLE)
-        .select('created_at, sender_id')
-        .eq('event_id', id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if(error){ console.error('[dm] getLatestForEvents failed for', id, error); return null; }
-      return (data && data[0]) ? data[0] : null;
-    }));
+  // below): the latest message per event, for every event this user
+  // hosts, in one query (every DM row carries the event's host_id
+  // regardless of who actually sent it — see send() below — so a single
+  // "where host_id = me" query covers every hosted event's inbox at
+  // once, no need to already know which event ids to ask about).
+  async getHostThreadsLatest(hostId){
+    if(!sbReady() || !hostId) return {};
+    const { data, error } = await sbClient
+      .from(DM_TABLE)
+      .select('event_id, created_at, sender_id')
+      .eq('host_id', hostId)
+      .order('created_at', { ascending: false });
+    if(error){ console.error('[dm] getHostThreadsLatest failed', error); return {}; }
     const map = {};
-    eventIds.forEach(function(id, i){ if(results[i]) map[id] = results[i]; });
+    (data || []).forEach(function(m){
+      if(!map[m.event_id]) map[m.event_id] = m; // first hit per event_id is the latest (rows are newest-first)
+    });
+    return map;
+  },
+  // Mirror of the above for the participant side ("Message host"): the
+  // latest message per event in every thread *this user* is the
+  // participant of — i.e. every game where they've messaged (or been
+  // messaged by) that game's host.
+  async getParticipantThreadsLatest(participantId){
+    if(!sbReady() || !participantId) return {};
+    const { data, error } = await sbClient
+      .from(DM_TABLE)
+      .select('event_id, created_at, sender_id')
+      .eq('participant_id', participantId)
+      .order('created_at', { ascending: false });
+    if(error){ console.error('[dm] getParticipantThreadsLatest failed', error); return {}; }
+    const map = {};
+    (data || []).forEach(function(m){
+      if(!map[m.event_id]) map[m.event_id] = m;
+    });
     return map;
   },
   subscribe(eventId, participantId, onInsert, channelSuffix){
@@ -1213,6 +1231,11 @@ const opUI = { user: null, authReady: false, events: [], eventsReady: false, err
   // the "DM UNREAD TRACKING" section below — same shape/pattern as
   // unreadChatEvents, just scoped to the host's own "Messages" button.
   unreadDmEvents: {},
+  // eventId -> true for every event where this signed-in user (as a
+  // participant, not the host) has a "Message host" thread with a reply
+  // from the host they haven't opened yet. Mirror of unreadDmEvents for
+  // the other side of the same conversation.
+  unreadDmMineEvents: {},
   // eventId -> true for every chat-enabled event (hosted, sub-hosted, or
   // joined) that has messages the signed-in user hasn't opened yet. See
   // the "CHAT UNREAD TRACKING" section below.
@@ -1276,14 +1299,17 @@ function opEnsureHistoryIds(){
 }
 
 /* ---------------- DM UNREAD TRACKING ----------------
-   Puts a small notification dot on the host's "Messages" button (and on
-   their event cards) when one of their events has a private message from
-   a participant that they haven't opened yet. Scoped to hosts only, since
-   that's the "Messages" inbox — a participant's own "Message host" thread
-   is just one conversation they're already looking at when they open it.
-
-   Read state is tracked per (host, event) in localStorage, same as chat —
-   purely a "have I looked" marker, no cross-device sync needed. */
+   Puts a small notification dot in two places, for the two sides of the
+   same conversation:
+     - the host's "Messages" button (and their event cards), when a
+       participant has sent them a DM they haven't opened yet
+     - a participant's "Message host" button (and their event cards),
+       when the host has replied to *their* thread and they haven't
+       opened it yet
+   Both read state is tracked per (user, event) in localStorage, same as
+   chat — purely a "have I looked" marker, no cross-device sync needed,
+   and the same key works for both sides since one person can't be both
+   host and participant of the same single event. */
 const OP_DM_READ_PREFIX = 'op_dm_read:';
 function opDmReadKey(eventId, userId){ return OP_DM_READ_PREFIX + userId + ':' + eventId; }
 function opGetDmLastRead(eventId){
@@ -1296,17 +1322,18 @@ function opMarkDmRead(eventId, iso){
   try{ localStorage.setItem(opDmReadKey(eventId, opUI.user.id), iso || new Date().toISOString()); }
   catch(err){ /* private browsing / storage full — badge just won't persist across reloads */ }
   if(opUI.unreadDmEvents[eventId]) delete opUI.unreadDmEvents[eventId];
+  if(opUI.unreadDmMineEvents[eventId]) delete opUI.unreadDmMineEvents[eventId];
 }
 
-// Refetches, for every event this user hosts, whether there's a DM newer
-// than what they've last read — same throttled/poll-based shape as
-// opRefreshChatUnread, for the same reasons (no realtime subscription
-// just for a badge).
+// Refetches whether there's a DM newer than what's been read, for both
+// sides at once — same throttled/poll-based shape as opRefreshChatUnread,
+// for the same reasons (no realtime subscription just for a badge).
 let opDmUnreadRefreshInFlight = false;
 let opLastDmUnreadRefresh = 0;
 async function opRefreshDmUnread(force){
   if(!opUI.user || !sbReady()){
     opUI.unreadDmEvents = {};
+    opUI.unreadDmMineEvents = {};
     return;
   }
   if(!force && typeof document !== 'undefined' && document.hidden) return;
@@ -1316,24 +1343,36 @@ async function opRefreshDmUnread(force){
   opDmUnreadRefreshInFlight = true;
   opLastDmUnreadRefresh = now;
   try{
-    const hostId = opUI.user.id;
-    // Messages close for good OP_POST_END_MESSAGING_WINDOW_MS after a game
-    // ends (see opMessagingClosed) — no point badging something the host
-    // can no longer open.
-    const ids = opUI.events
-      .filter(function(e){ return e.host_id === hostId && !opMessagingClosed(e); })
-      .map(function(e){ return e.id; });
-    if(!ids.length){ opUI.unreadDmEvents = {}; return; }
-    const latestMap = await DmAPI.getLatestForEvents(ids);
-    const unread = {};
-    ids.forEach(function(id){
-      const latest = latestMap[id];
-      if(!latest) return;
-      if(latest.sender_id === hostId) return; // last word was ours — nothing new to see
-      const lastRead = opGetDmLastRead(id);
-      if(!lastRead || new Date(latest.created_at) > new Date(lastRead)) unread[id] = true;
+    const myId = opUI.user.id;
+    function isOpenForMessaging(eventId){
+      const ev = opUI.events.find(function(e){ return e.id === eventId; });
+      return !ev || !opMessagingClosed(ev); // unknown event (not loaded yet) — don't hide it, err on showing
+    }
+
+    const [hostLatest, mineLatest] = await Promise.all([
+      DmAPI.getHostThreadsLatest(myId),
+      DmAPI.getParticipantThreadsLatest(myId),
+    ]);
+
+    const unreadHost = {};
+    Object.keys(hostLatest).forEach(function(eventId){
+      const latest = hostLatest[eventId];
+      if(latest.sender_id === myId) return; // last word was ours — nothing new to see
+      if(!isOpenForMessaging(eventId)) return;
+      const lastRead = opGetDmLastRead(eventId);
+      if(!lastRead || new Date(latest.created_at) > new Date(lastRead)) unreadHost[eventId] = true;
     });
-    opUI.unreadDmEvents = unread;
+    opUI.unreadDmEvents = unreadHost;
+
+    const unreadMine = {};
+    Object.keys(mineLatest).forEach(function(eventId){
+      const latest = mineLatest[eventId];
+      if(latest.sender_id === myId) return; // last word was ours
+      if(!isOpenForMessaging(eventId)) return;
+      const lastRead = opGetDmLastRead(eventId);
+      if(!lastRead || new Date(latest.created_at) > new Date(lastRead)) unreadMine[eventId] = true;
+    });
+    opUI.unreadDmMineEvents = unreadMine;
   }catch(err){
     console.error('[dm] unread refresh failed', err);
   }finally{
@@ -1503,6 +1542,7 @@ function opBootReady(){
     if(signedOut){
       opUI.unreadChatEvents = {};
       opUI.unreadDmEvents = {};
+      opUI.unreadDmMineEvents = {};
       opUI.historyParticipantIds = null;
       opHistoryIdsLoadedFor = null;
     } else if(user){
@@ -2131,7 +2171,7 @@ function opEventCard(ev){
   // host, or confirmed joiner) hasn't opened yet — see "CHAT UNREAD
   // TRACKING" above. Also lit when the host has an unread private message
   // on this event — see "DM UNREAD TRACKING" above.
-  const hasUnread = !!opUI.unreadChatEvents[ev.id] || !!opUI.unreadDmEvents[ev.id];
+  const hasUnread = !!opUI.unreadChatEvents[ev.id] || !!opUI.unreadDmEvents[ev.id] || !!opUI.unreadDmMineEvents[ev.id];
   const unreadDot = hasUnread
     ? `<span class="op-chat-unread-dot" title="New messages"></span>` : '';
   return `
@@ -2206,12 +2246,13 @@ async function opOpenEventDetail(eventId){
   // waitlist) can start a private thread with the host. The host instead
   // gets a "Messages" button that lists every thread on this event.
   const hasUnreadDm = isHost && !messagingClosed && !!opUI.unreadDmEvents[ev.id];
+  const hasUnreadDmMine = !isHost && !messagingClosed && !!opUI.unreadDmMineEvents[ev.id];
   const dmButton = messagingClosed
     ? (ended && (isHost || (!isSubHost && !!myRsvp)) ? `<button class="btn btn-ghost" disabled title="Messages close 2 days after a game ends">\u2709\ufe0f Messages closed</button>` : '')
     : (isHost
       ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages${hasUnreadDm ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New message"></span>' : ''}</button>`
       : (!isSubHost && !!myRsvp
-        ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host</button>`
+        ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host${hasUnreadDmMine ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New reply from host"></span>' : ''}</button>`
         : ''));
 
   openModal(`
@@ -2807,7 +2848,7 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
     ? `<button class="btn btn-ghost btn-block" data-action="op-open-dm-list" data-id="${ev.id}" style="margin-top:8px;">Back to messages</button>`
     : `<button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>`;
   const headerName = isHost ? (participantName || 'Player') : (ev.host_name || 'Host');
-  if(isHost) opMarkDmRead(eventId); // looking at a thread on this event now — clear the badge
+  opMarkDmRead(eventId); // looking at a thread on this event now — clear the badge (host or participant, same key)
 
   opDmCleanup();
 
@@ -2831,7 +2872,7 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
 
   function appendMessage(m){
     if(!listEl) return;
-    if(isHost) opMarkDmRead(eventId, m.created_at); // already looking at it — never badge this one
+    opMarkDmRead(eventId, m.created_at); // already looking at it — never badge this one (host or participant)
     const nearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 60;
     const emptyNote = listEl.querySelector('.op-empty');
     if(emptyNote) emptyNote.remove();
