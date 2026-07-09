@@ -119,6 +119,40 @@ const ChatAPI = {
   unsubscribe(channel){
     if(channel && sbClient) sbClient.removeChannel(channel);
   },
+
+  // Bulk helpers for the unread-chat-badge feature (see the "CHAT UNREAD
+  // TRACKING" section below). Read-only "peek" queries, kept here
+  // alongside the rest of the chat wire calls.
+  async getMyEventIds(userId){
+    if(!sbReady() || !userId) return [];
+    const { data, error } = await sbClient
+      .from(MEMBERSHIP_TABLE)
+      .select('event_id')
+      .eq('user_id', userId);
+    if(error){ console.error('[chat] getMyEventIds failed', error); return []; }
+    return (data || []).map(function(r){ return r.event_id; });
+  },
+  // Latest message timestamp per event id, for badge comparisons. One
+  // tiny query per event rather than a grouped query — simpler than a
+  // Postgres RPC, and event counts here are small (bounded by
+  // MAX_OPEN_EVENTS_PER_HOST per host, plus however many games this
+  // person has joined).
+  async getLatestTimestamps(eventIds){
+    if(!sbReady() || !eventIds || !eventIds.length) return {};
+    const results = await Promise.all(eventIds.map(async function(id){
+      const { data, error } = await sbClient
+        .from(CHAT_TABLE)
+        .select('created_at')
+        .eq('event_id', id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if(error){ console.error('[chat] getLatestTimestamps failed for', id, error); return null; }
+      return (data && data[0]) ? data[0].created_at : null;
+    }));
+    const map = {};
+    eventIds.forEach(function(id, i){ if(results[i]) map[id] = results[i]; });
+    return map;
+  },
 };
 
 // Mirrors "who the host has confirmed" into Supabase so the chat table's
@@ -629,7 +663,11 @@ window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
 /* ---------------- local UI state ---------------- */
 const opUI = { user: null, authReady: false, events: [], eventsReady: false, error: null,
   // Discover tab's date filter — { preset: 'all' | 'today' | 'tomorrow' | 'week' | 'weekend' | 'date', date: 'YYYY-MM-DD' | '' }
-  discoverFilter: { preset: 'all', date: '' } };
+  discoverFilter: { preset: 'all', date: '' },
+  // eventId -> true for every chat-enabled event (hosted, sub-hosted, or
+  // joined) that has messages the signed-in user hasn't opened yet. See
+  // the "CHAT UNREAD TRACKING" section below.
+  unreadChatEvents: {} };
 Object.defineProperty(opUI, 'loading', { get: function(){ return !opUI.authReady || !opUI.eventsReady; } });
 
 let opUnsubEvents = null;
@@ -664,13 +702,109 @@ function maybeRerenderOpenPlay(){
   if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
 }
 
+/* ---------------- CHAT UNREAD TRACKING ----------------
+   Puts a small notification dot on event cards and on the "Event Chat"
+   button in event detail when a chat this user can post in has messages
+   they haven't opened yet. "Can chat in" reuses the same
+   open_play_confirmed_participants membership table the chat RLS policy
+   already relies on (see ChatMembership above) — it's exactly "host, sub
+   host, or confirmed joiner" for each event, kept in sync as a side
+   effect of those actions elsewhere in this file.
+
+   Read state is tracked per (user, event) in localStorage — it's purely
+   a "have I looked" marker with no need to sync across devices. */
+const OP_CHAT_READ_PREFIX = 'op_chat_read:';
+function opChatReadKey(eventId, userId){ return OP_CHAT_READ_PREFIX + userId + ':' + eventId; }
+function opGetChatLastRead(eventId){
+  if(!opUI.user) return null;
+  try{ return localStorage.getItem(opChatReadKey(eventId, opUI.user.id)); }
+  catch(err){ return null; }
+}
+function opMarkChatRead(eventId, iso){
+  if(!opUI.user) return;
+  try{ localStorage.setItem(opChatReadKey(eventId, opUI.user.id), iso || new Date().toISOString()); }
+  catch(err){ /* private browsing / storage full — badge just won't persist across reloads */ }
+  if(opUI.unreadChatEvents[eventId]) delete opUI.unreadChatEvents[eventId];
+}
+
+// eventId currently open in the chat modal, if any — new messages for
+// this event mark themselves read immediately instead of lighting up
+// the badge, since the person is already looking at them.
+let opChatOpenEventId = null;
+
+// One lightweight realtime subscription per chat-enabled event, purely
+// to flip the badge the instant a new message arrives. Separate from
+// opChatChannel (in the CHAT VIEW section below), which is the single,
+// richer subscription for whichever chat is actually open in the modal.
+let opUnreadChannels = {};
+function opSyncUnreadChannels(ids){
+  const idSet = {};
+  ids.forEach(function(id){ idSet[id] = true; });
+  Object.keys(opUnreadChannels).forEach(function(id){
+    if(!idSet[id]){ ChatAPI.unsubscribe(opUnreadChannels[id]); delete opUnreadChannels[id]; }
+  });
+  ids.forEach(function(id){
+    if(opUnreadChannels[id]) return;
+    opUnreadChannels[id] = ChatAPI.subscribe(id, function(msg){
+      if(id === opChatOpenEventId || (opUI.user && msg.user_id === opUI.user.id)){
+        opMarkChatRead(id, msg.created_at);
+      } else {
+        opUI.unreadChatEvents[id] = true;
+      }
+      maybeRerenderOpenPlay();
+    });
+  });
+}
+function opTeardownUnreadChannels(){
+  Object.keys(opUnreadChannels).forEach(function(id){ ChatAPI.unsubscribe(opUnreadChannels[id]); });
+  opUnreadChannels = {};
+}
+
+// Refetches which events this user can chat in and whether each has
+// unread messages. Throttled since it fires opportunistically (every
+// Discover/Host render, plus a slow poll) rather than only on demand.
+let opUnreadRefreshInFlight = false;
+let opLastUnreadRefresh = 0;
+async function opRefreshChatUnread(force){
+  if(!opUI.user || !sbReady()){
+    opUI.unreadChatEvents = {};
+    opTeardownUnreadChannels();
+    return;
+  }
+  const now = Date.now();
+  if(!force && now - opLastUnreadRefresh < 20000) return; // throttle
+  if(opUnreadRefreshInFlight) return;
+  opUnreadRefreshInFlight = true;
+  opLastUnreadRefresh = now;
+  try{
+    const ids = await ChatAPI.getMyEventIds(opUI.user.id);
+    opSyncUnreadChannels(ids);
+    if(!ids.length){ opUI.unreadChatEvents = {}; return; }
+    const latestMap = await ChatAPI.getLatestTimestamps(ids);
+    const unread = {};
+    ids.forEach(function(id){
+      if(id === opChatOpenEventId) return; // already looking at it
+      const latest = latestMap[id];
+      if(!latest) return;
+      const lastRead = opGetChatLastRead(id);
+      if(!lastRead || new Date(latest) > new Date(lastRead)) unread[id] = true;
+    });
+    opUI.unreadChatEvents = unread;
+  }catch(err){
+    console.error('[chat] unread refresh failed', err);
+  }finally{
+    opUnreadRefreshInFlight = false;
+    maybeRerenderOpenPlay();
+  }
+}
+
 // Nothing in Firestore changes when an event's start_time simply arrives —
 // there's no write, no onSnapshot event, nothing to trigger a rerender.
 // Without this, the Open -> Happening flip (and Happening -> back to normal
 // once the assumed duration passes) would only ever show up after some
 // unrelated rerender happened to fire. Poll once a minute instead so the
 // Discover badges stay accurate on their own while the tab is open.
-setInterval(function(){ maybeRerenderOpenPlay(); }, 60 * 1000);
+setInterval(function(){ maybeRerenderOpenPlay(); opRefreshChatUnread(); }, 60 * 1000);
 
 function opHandleSharedLink(){
   if(opUI._sharedLinkHandled) return;
@@ -728,8 +862,15 @@ function opBootReady(){
   }
 
   OpenPlayAPI.onAuthChange(function(user){
+    const signedOut = !user && !!opUI.user;
     opUI.user = user;
     opUI.authReady = true;
+    if(signedOut){
+      opTeardownUnreadChannels();
+      opUI.unreadChatEvents = {};
+    } else if(user){
+      opRefreshChatUnread(true);
+    }
     maybeRerenderOpenPlay();
   });
 
@@ -1201,6 +1342,8 @@ function renderDiscoverView(el){
     return;
   }
 
+  opRefreshChatUnread(); // throttled — cheap to call on every render
+
   // status === 'open' just means the host hasn't cancelled it — it stays
   // 'open' forever unless they do, so we also need to check the time-based
   // opIsEnded() here or games whose end time has already passed would keep
@@ -1252,10 +1395,15 @@ function renderDiscoverView(el){
 
 function opEventCard(ev){
   const badge = OP_STATUS_BADGES[opEventStatus(ev)];
+  // Lit when this event's chat has messages the current user (host, sub
+  // host, or confirmed joiner) hasn't opened yet — see "CHAT UNREAD
+  // TRACKING" above.
+  const unreadDot = opUI.unreadChatEvents[ev.id]
+    ? `<span class="op-chat-unread-dot" title="New chat messages"></span>` : '';
   return `
     <div class="op-card" data-action="op-open-event" data-id="${ev.id}">
       <div class="op-card-top">
-        <div class="op-card-title">${esc(ev.title)}</div>
+        <div class="op-card-title">${esc(ev.title)}${unreadDot}</div>
         ${badge}
       </div>
       <div class="op-card-row">📍 ${opLocationLinkHtml(ev, esc(ev.location_name))}</div>
@@ -1310,8 +1458,9 @@ async function opOpenEventDetail(eventId){
     ? `<button class="btn btn-ghost" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
   const canChat = isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested);
+  const hasUnreadChat = canChat && !!opUI.unreadChatEvents[ev.id];
   const chatButton = canChat
-    ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Event Chat</button>`
+    ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Event Chat${hasUnreadChat ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New chat messages"></span>' : ''}</button>`
     : '';
 
   openModal(`
@@ -1343,6 +1492,7 @@ let opChatChannel = null;
 
 function opChatCleanup(){
   if(opChatChannel){ ChatAPI.unsubscribe(opChatChannel); opChatChannel = null; }
+  opChatOpenEventId = null;
 }
 
 // The chat modal can be left in several ways (Back button, the generic
@@ -1385,6 +1535,8 @@ async function opRenderEventChat(eventId){
   }
 
   opChatCleanup();
+  opChatOpenEventId = eventId;
+  opMarkChatRead(eventId); // clear the badge right away; refined below once we know the real latest message time
 
   openModal(`
     <div class="modal-title">${esc(ev.title)} · Chat</div>
@@ -1420,11 +1572,15 @@ async function opRenderEventChat(eventId){
       listEl.innerHTML = `<div class="op-empty" style="padding:24px;">No messages yet \u2014 say hi \ud83d\udc4b</div>`;
     } else {
       messages.forEach(appendMessage);
+      opMarkChatRead(eventId, messages[messages.length - 1].created_at);
     }
     listEl.scrollTop = listEl.scrollHeight;
   }
 
-  opChatChannel = ChatAPI.subscribe(eventId, appendMessage);
+  opChatChannel = ChatAPI.subscribe(eventId, function(m){
+    appendMessage(m);
+    opMarkChatRead(eventId, m.created_at); // already looking at it — never badge this one
+  });
 
   const form = document.getElementById('opChatForm');
   if(form){
@@ -1815,6 +1971,8 @@ function renderHostView(el){
   // deleted — critical, since rerendering unconditionally here would just
   // call this same function again on every render, in an endless loop.
   opCleanupOldPastEvents().then(function(deletedAny){ if(deletedAny) maybeRerenderOpenPlay(); });
+
+  opRefreshChatUnread(); // throttled — cheap to call on every render
 
   const mine = opUI.events.filter(function(e){ return e.host_id === opUI.user.id; });
   // status === 'open' only reflects whether the host has cancelled the
