@@ -336,6 +336,23 @@
   font-weight:600; color:inherit; text-decoration:underline;
 }
 
+/* Image attachments: drop the bubble's own background/border/padding so
+   the photo isn't sitting inside a colored frame (blue for your own
+   messages) — the image just shows on its own with rounded corners. If
+   there's caption text too, that still gets a padded strip underneath in
+   the normal bubble color, so text stays readable. */
+.op-chat-bubble-media{ background:transparent; border:none; padding:0; overflow:hidden; }
+.op-chat-msg-mine .op-chat-bubble-media{ background:transparent; border:none; }
+.op-chat-bubble-media .op-chat-attach-img-link{ margin-bottom:0; }
+.op-chat-bubble-media .op-chat-attach-img{
+  max-height:260px; border-radius:var(--radius-md);
+}
+.op-chat-bubble-media .op-chat-bubble-text{
+  background:var(--surface-2); color:var(--text); padding:8px 12px; margin-top:6px;
+  border-radius:calc(var(--radius-md) - 2px);
+}
+.op-chat-msg-mine .op-chat-bubble-media .op-chat-bubble-text{ background:var(--court); color:#0a0a0a; }
+
 /* Unread chat notification dot — lights up on event cards (op-card-title)
    and on the "Event Chat" button in event detail when there are messages
    the current user hasn't opened the chat to see yet. */
