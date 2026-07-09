@@ -419,7 +419,17 @@ drop policy if exists "membership syncable delete" on open_play_confirmed_partic
 create policy "membership syncable delete" on open_play_confirmed_participants
   for delete using (true);
 
-alter publication supabase_realtime add table open_play_chat_messages;
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'open_play_chat_messages'
+  ) then
+    alter publication supabase_realtime add table open_play_chat_messages;
+  end if;
+end $$;
 
 -- Retention: keep only the 100 newest messages per event; every insert
 -- prunes anything older past that. Note this does NOT delete the
@@ -1823,6 +1833,25 @@ async function opRenderEventChat(eventId){
   opChatCleanup();
   opChatOpenEventId = eventId;
   opMarkChatRead(eventId); // clear the badge right away; refined below once we know the real latest message time
+
+  // Self-heal membership: ChatMembership.add() normally fires at the
+  // moment someone hosts an event or gets an RSVP confirmed, but anyone
+  // whose host/RSVP record predates that sync (or slipped through for any
+  // other reason) would otherwise be permanently unable to edit/unsend
+  // their own messages, since those RLS policies require a membership
+  // row. Re-confirming it here, every time this user opens this event's
+  // chat, fixes that with no manual backfill needed. Best-effort — same
+  // as every other ChatMembership call, this must never block chat itself.
+  try{
+    const isHost = ev.host_id === opUI.user.id;
+    const isSubHost = !isHost && ev.sub_host_id === opUI.user.id;
+    const myRsvp = (!isHost && !isSubHost) ? await OpenPlayAPI.myRsvpForEvent(eventId, opUI.user.id) : null;
+    const isConfirmedJoiner = !!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested;
+    if(isHost || isSubHost || isConfirmedJoiner){
+      const role = isHost ? 'host' : (isSubHost ? 'subhost' : 'participant');
+      await ChatMembership.add(eventId, opUI.user.id, opUI.user.display_name, opUI.user.avatar_url, role);
+    }
+  }catch(err){ console.error('[chat] membership self-heal failed', err); }
 
   openModal(`
     <div class="modal-title">${esc(ev.title)} · Chat</div>
