@@ -234,6 +234,58 @@
 .op-chat-input{ flex:1; margin-bottom:0; }
 .op-chat-send{ flex:none; padding:10px 16px; }
 
+/* Edited / deleted state */
+.op-chat-edited-tag{ font-style:italic; opacity:0.8; }
+.op-chat-bubble-deleted,
+.op-chat-msg-mine .op-chat-bubble-deleted{
+  font-style:italic; color:var(--text-dim); background:transparent; border:1px dashed var(--line);
+}
+
+/* Per-message actions (Edit / Unsend), only shown on your own messages */
+.op-chat-msg-actions{ display:flex; align-items:center; gap:10px; margin:3px 2px 0; }
+.op-chat-msg-action{
+  background:none; border:none; padding:0; font-size:11px; font-weight:700;
+  color:var(--text-dim); cursor:pointer; font-family:var(--font-ui);
+}
+.op-chat-msg-action:hover{ color:var(--text); text-decoration:underline; }
+.op-chat-msg-action-danger{ color:var(--loss); }
+.op-chat-msg-action-danger:hover{ color:var(--loss); }
+.op-chat-msg-action-confirm{ font-size:11px; color:var(--text-dim); }
+
+/* Inline edit mode — replaces the bubble's contents in place */
+.op-chat-edit-input{ margin-bottom:6px; font-size:13.5px; }
+.op-chat-edit-actions{ display:flex; gap:8px; }
+
+/* Attachments */
+.op-chat-attach-btn{
+  flex:none; background:var(--surface-2); border:1px solid var(--line); color:var(--text-dim);
+  border-radius:var(--radius-sm); width:38px; height:38px; font-size:16px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.op-chat-attach-btn:hover{ color:var(--text); border-color:var(--court-dim); }
+.op-chat-attach-btn:disabled{ opacity:0.5; cursor:default; }
+
+.op-chat-attach-preview{
+  align-items:center; justify-content:space-between; gap:8px;
+  background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm);
+  padding:7px 10px; margin:-2px 0 8px; font-size:12.5px; color:var(--text-dim);
+}
+.op-chat-attach-preview-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.op-chat-attach-remove{
+  flex:none; background:none; border:none; color:var(--text-dim); font-size:14px;
+  cursor:pointer; padding:0 2px;
+}
+.op-chat-attach-remove:hover{ color:var(--loss); }
+
+.op-chat-attach-img-link{ display:block; margin-bottom:6px; }
+.op-chat-attach-img{
+  max-width:100%; max-height:200px; border-radius:calc(var(--radius-md) - 2px); display:block;
+}
+.op-chat-attach-file{
+  display:inline-flex; align-items:center; gap:6px; margin-bottom:6px; font-size:13px;
+  font-weight:600; color:inherit; text-decoration:underline;
+}
+
 /* Unread chat notification dot — lights up on event cards (op-card-title)
    and on the "Event Chat" button in event detail when there are messages
    the current user hasn't opened the chat to see yet. */
