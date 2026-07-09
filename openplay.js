@@ -2585,10 +2585,13 @@ function opChatTime(iso){
   }catch(err){ return ''; }
 }
 
+function opAttachmentIsImage(m){
+  return !!(m.attachment_url && (m.attachment_type || '').indexOf('image/') === 0);
+}
+
 function opChatAttachmentHtml(m){
   if(!m.attachment_url) return '';
-  const isImage = (m.attachment_type || '').indexOf('image/') === 0;
-  if(isImage){
+  if(opAttachmentIsImage(m)){
     return `<a href="${esc(m.attachment_url)}" target="_blank" rel="noopener" class="op-chat-attach-img-link">
       <img src="${esc(m.attachment_url)}" class="op-chat-attach-img" alt="${esc(m.attachment_name || 'attachment')}" loading="lazy" />
     </a>`;
@@ -2624,9 +2627,14 @@ function opChatBubbleHtml(m, isMine){
   const editedTag = m.edited_at ? ' <span class="op-chat-edited-tag">(edited)</span>' : '';
   const attachHtml = opChatAttachmentHtml(m);
   const bodyHtml = m.body ? `<div class="op-chat-bubble-text">${esc(m.body)}</div>` : '';
+  // An image attachment gets its own unpadded, background-free bubble
+  // (op-chat-bubble-media) so the photo shows cleanly instead of sitting
+  // inside a colored/padded frame — any caption text still gets its own
+  // padded strip underneath, via op-chat-bubble-text's own styling.
+  const bubbleClass = 'op-chat-bubble' + (opAttachmentIsImage(m) ? ' op-chat-bubble-media' : '');
   return `
     ${!isMine ? `<div class="op-chat-msg-author">${esc(m.user_name || 'Player')}</div>` : ''}
-    <div class="op-chat-bubble">${attachHtml}${bodyHtml}</div>
+    <div class="${bubbleClass}">${attachHtml}${bodyHtml}</div>
     <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}${editedTag}</div>
     ${isMine ? opChatMsgActionsHtml(m) : ''}`;
 }
@@ -3004,9 +3012,10 @@ function opWatchDmCleanup(container){
 function opDmBubbleHtml(m, isMine){
   const attachHtml = opChatAttachmentHtml(m);
   const bodyHtml = m.body ? `<div class="op-chat-bubble-text">${esc(m.body)}</div>` : '';
+  const bubbleClass = 'op-chat-bubble' + (opAttachmentIsImage(m) ? ' op-chat-bubble-media' : '');
   return `
     ${!isMine ? `<div class="op-chat-msg-author">${esc(m.sender_name || 'Player')}</div>` : ''}
-    <div class="op-chat-bubble">${attachHtml}${bodyHtml}</div>
+    <div class="${bubbleClass}">${attachHtml}${bodyHtml}</div>
     <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
 }
 
