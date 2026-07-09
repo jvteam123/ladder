@@ -155,10 +155,10 @@ const ChatAPI = {
   // Subscribes to inserts (new messages) AND updates (edits/unsends) for
   // one event's chat. `handlers` is { onInsert, onUpdate }. Returns a
   // channel handle to pass to unsubscribe() when the chat view closes.
-  subscribe(eventId, handlers){
+  subscribe(eventId, handlers, channelSuffix){
     if(!sbReady()) return null;
     return sbClient
-      .channel('open-play-chat-' + eventId)
+      .channel('open-play-chat-' + eventId + (channelSuffix ? '-' + channelSuffix : ''))
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: CHAT_TABLE,
         filter: 'event_id=eq.' + eventId,
@@ -991,14 +991,16 @@ function opSyncUnreadChannels(ids){
   });
   ids.forEach(function(id){
     if(opUnreadChannels[id]) return;
-    opUnreadChannels[id] = ChatAPI.subscribe(id, function(msg){
-      if(id === opChatOpenEventId || (opUI.user && msg.user_id === opUI.user.id)){
-        opMarkChatRead(id, msg.created_at);
-      } else {
-        opUI.unreadChatEvents[id] = true;
-      }
-      maybeRerenderOpenPlay();
-    });
+    opUnreadChannels[id] = ChatAPI.subscribe(id, {
+      onInsert: function(msg){
+        if(id === opChatOpenEventId || (opUI.user && msg.user_id === opUI.user.id)){
+          opMarkChatRead(id, msg.created_at);
+        } else {
+          opUI.unreadChatEvents[id] = true;
+        }
+        maybeRerenderOpenPlay();
+      },
+    }, 'unread');
   });
 }
 function opTeardownUnreadChannels(){
@@ -1916,7 +1918,7 @@ async function opRenderEventChat(eventId){
     onUpdate: function(m){
       updateMessage(m); // someone's edit/unsend landed — reflects instantly, incl. our own
     },
-  });
+  }, 'open');
 
   // ---- attachments ----
   let myAttachmentCount = 0;
