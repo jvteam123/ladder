@@ -1182,7 +1182,7 @@ async function opCleanupOldPastEvents(){
 }
 
 function maybeRerenderOpenPlay(){
-  if(window.state && (state.tab === 'discover' || state.tab === 'host' || state.tab === 'Hosted history')) renderActiveView();
+  if(window.state && (state.tab === 'discover' || state.tab === 'host' || state.tab === 'history')) renderActiveView();
 }
 
 // Loads (once per sign-in) the ids of past events the signed-in user was
