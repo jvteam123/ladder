@@ -949,7 +949,7 @@ function maybeRerenderOpenPlay(){
 }
 
 /* ---------------- CHAT UNREAD TRACKING ----------------
-   Puts a small notification dot on event cards and on the "Event Chat"
+   Puts a small notification dot on event cards and on the "Chat"
    button in event detail when a chat this user can post in has messages
    they haven't opened yet. "Can chat in" reuses the same
    open_play_confirmed_participants membership table the chat RLS policy
@@ -1705,7 +1705,7 @@ async function opOpenEventDetail(eventId){
   const canChat = isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested);
   const hasUnreadChat = canChat && !!opUI.unreadChatEvents[ev.id];
   const chatButton = canChat
-    ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Event Chat${hasUnreadChat ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New chat messages"></span>' : ''}</button>`
+    ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Chat${hasUnreadChat ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New chat messages"></span>' : ''}</button>`
     : '';
 
   openModal(`
