@@ -2413,10 +2413,12 @@ async function opOpenEventDetail(eventId){
   } else if(myRsvp && myRsvp.status === 'waitlist'){
     actionButton = `
       <div class="op-status-note op-status-waitlist">You're on the waitlist — the host still needs to confirm you.</div>
+      <button class="btn btn-ghost" data-action="op-open-request-guests" data-id="${ev.id}">+ Request +1</button>
       <button class="btn btn-ghost" data-action="op-request-leave" data-id="${ev.id}">Request to leave waitlist</button>`;
   } else if(myRsvp){
     actionButton = `
       <div class="op-status-note op-status-confirmed">You're in ✓ · ${myRsvp.paid ? 'Paid' : 'Unpaid'}</div>
+      <button class="btn btn-ghost" data-action="op-open-request-guests" data-id="${ev.id}">+ Request +1</button>
       <button class="btn btn-ghost" data-action="op-request-leave" data-id="${ev.id}">Request to leave</button>`;
   } else if(ended){
     // Game's already over — joining/waitlisting no longer makes sense.
@@ -2550,6 +2552,74 @@ function opRenderJoinRequestModal(eventId){
       }catch(err){
         console.error(err);
         toast(opFriendlyError(err, 'Could not send your request. Please try again.'), 'error');
+        if(submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+}
+
+/* ---------------- REQUEST +1 (post-join guest requests) ----------------
+   For a player who already holds a live rsvp (confirmed OR waitlist),
+   this lets them ask to bring extra people *after* the fact — separate
+   from the guest fields on the original join request above. Each name
+   becomes its own waitlist entry via OpenPlayAPI.addGuestRsvp, tagged
+   "Guest of {you}" for the host, exactly like a guest added at join time.
+   Nothing about the requester's own spot changes here. */
+function opRenderRequestGuestsModal(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev || !opUI.user) return;
+
+  openModal(`
+    <div class="modal-title">Request +1</div>
+    <div class="modal-sub">${esc(ev.title)}</div>
+    <form id="opRequestGuestsForm" class="op-form">
+      <div class="op-h-sub" style="margin:-2px 0 12px;">Add anyone else you'd like to bring — each name goes on the waitlist as its own request for the host to confirm.</div>
+      <label class="op-label">Player name(s)</label>
+      <div id="opRequestGuestFields"></div>
+      <button type="button" class="btn btn-ghost" id="opRequestAddGuestBtn" style="margin-bottom:12px;">+ Add a player</button>
+      <button type="submit" class="btn btn-primary btn-block" id="opRequestGuestsSubmitBtn">Send request</button>
+    </form>
+    <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>
+  `);
+
+  const fieldsEl = document.getElementById('opRequestGuestFields');
+  const addBtn = document.getElementById('opRequestAddGuestBtn');
+  function guestInputs(){ return fieldsEl ? Array.from(fieldsEl.querySelectorAll('.op-guest-input')) : []; }
+  function refreshAddBtn(){ if(addBtn) addBtn.style.display = guestInputs().length >= MAX_GUESTS_PER_JOIN ? 'none' : ''; }
+  function addGuestField(){
+    if(guestInputs().length >= MAX_GUESTS_PER_JOIN || !fieldsEl) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = opGuestFieldRowHtml();
+    const row = wrap.firstElementChild;
+    fieldsEl.appendChild(row);
+    const removeBtn = row.querySelector('[data-guest-remove]');
+    if(removeBtn) removeBtn.addEventListener('click', function(){ row.remove(); refreshAddBtn(); });
+    const input = row.querySelector('.op-guest-input');
+    if(input) input.focus();
+    refreshAddBtn();
+  }
+  addGuestField(); // start with one field, since the whole point of this modal is adding someone
+  if(addBtn) addBtn.addEventListener('click', addGuestField);
+
+  const form = document.getElementById('opRequestGuestsForm');
+  if(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const names = guestInputs().map(function(i){ return (i.value || '').trim(); }).filter(Boolean);
+      if(!names.length){ toast('Add at least one name first.', 'error'); return; }
+      const submitBtn = document.getElementById('opRequestGuestsSubmitBtn');
+      if(submitBtn) submitBtn.disabled = true;
+      let added = 0;
+      for(const name of names.slice(0, MAX_GUESTS_PER_JOIN)){
+        try{ await OpenPlayAPI.addGuestRsvp(eventId, opUI.user, name); added++; }
+        catch(err){ console.error('[request-guests] could not add guest', name, err); }
+      }
+      if(added){
+        toast(`Request sent for ${added} more player${added > 1 ? 's' : ''} — waiting on the host.`, 'success');
+        await opOpenEventDetail(eventId);
+        renderActiveView();
+      }else{
+        toast('Could not send that request. Please try again.', 'error');
         if(submitBtn) submitBtn.disabled = false;
       }
     });
@@ -3825,6 +3895,10 @@ document.addEventListener('click', async function(e){
     }
     case 'op-open-join-request': {
       opRenderJoinRequestModal(t.dataset.id);
+      break;
+    }
+    case 'op-open-request-guests': {
+      opRenderRequestGuestsModal(t.dataset.id);
       break;
     }
     case 'op-join-event': {
