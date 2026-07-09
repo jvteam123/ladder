@@ -1770,6 +1770,24 @@ function fmtWhenRange(ev){
   return start + ' – ' + endD.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
 }
 
+// Builds the plain-text blurb for "Copy shareable link" — title, venue,
+// date/time range, and payment (when the host set one), followed by a
+// blank line and the RSVP link on its own line so it's easy to paste
+// straight into a group chat while still being tappable. Plain text, not
+// HTML, so this uses the raw field values rather than esc(). Falls back
+// to just the bare link if the event can't be found (e.g. a stale card).
+function opShareText(ev, url){
+  if(!ev) return url;
+  const lines = [ev.title || 'Open Play'];
+  if(ev.location_name) lines.push('📍 ' + ev.location_name);
+  const when = fmtWhenRange(ev);
+  if(when) lines.push('🗓️ ' + when);
+  if(ev.fee_amount) lines.push('💵 ' + ev.fee_amount + (ev.fee_note ? ' — ' + ev.fee_note : ''));
+  lines.push('');
+  lines.push('RSVP: ' + url);
+  return lines.join('\n');
+}
+
 /* ---------------- Discover: date/time filter (Reclub-style) ---------------- */
 function opLocalDateKey(d){
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -3851,12 +3869,14 @@ document.addEventListener('click', async function(e){
       break;
     }
     case 'op-share-event': {
+      const ev = opUI.events.find(function(e){ return e.id === t.dataset.id; });
       const url = `${location.origin}${location.pathname}#open-play=${t.dataset.id}`;
+      const text = opShareText(ev, url);
       try{
-        await navigator.clipboard.writeText(url);
-        toast('Link copied — share it in your group chat!', 'success');
+        await navigator.clipboard.writeText(text);
+        toast('Details copied — paste it in your group chat!', 'success');
       }catch(err){
-        toast(url, 'default');
+        toast(text, 'default');
       }
       break;
     }
