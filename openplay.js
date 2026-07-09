@@ -33,6 +33,196 @@ function fbReady(){ return !!(window.fbAuth && window.fbDb); }
 
 function rsvpDocId(eventId, uid){ return eventId + '_' + uid; }
 
+/* ---------------- CHAT (Supabase Postgres + Realtime) ----------------
+   Identity/events/RSVPs stay on Firebase (above); chat lives in Supabase,
+   used purely for Realtime-over-Postgres. Requires the supabase-js UMD
+   build loaded on the page BEFORE this file:
+     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+   The anon key below is the public "anon" key, not a secret - it is
+   meant to ship in client code. Real access control has to live in the
+   database via Row Level Security (RLS) policies. See the SQL comment
+   below the ChatAPI/ChatMembership objects for the tables + policies
+   this feature expects.
+
+   NOTE ON AUTH: this app's identity system is Firebase Auth, not
+   Supabase Auth, so Supabase/RLS has no Supabase session tied to the
+   Firebase user, and can't cryptographically verify who is asking.
+   To gate chat to "people the host has confirmed" anyway, this file
+   mirrors a small membership list into Supabase (open_play_confirmed_
+   participants) every time a host confirms/removes someone in Firestore,
+   and the chat table's INSERT policy requires (event_id, user_id) to be
+   present in that list. That stops anyone who *isn't* a confirmed
+   participant from posting at all, without any new server.
+
+   Residual limitation, by design (see the "lightweight, no server"
+   option): the client still supplies its own user_id on each request,
+   and nothing here cryptographically proves that a given browser really
+   is that Firebase user. So the check is "does this look like a
+   confirmed participant" rather than "is this provably that person" -
+   someone who already knew another confirmed participant's Firebase uid
+   could still post under it. Closing that gap needs real identity
+   verification (Supabase Auth, or a small server/Edge Function that
+   checks the Firebase ID token) - flag if you want that upgrade later.
+   Reads (SELECT) are left open to anyone who has the event id, same as
+   before, since restricting reads by identity has the same limitation. */
+
+const SUPABASE_URL = 'https://wxnjlhmqbgxhsnmcjyzi.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4bmpsaG1xYmd4aHNubWNqeXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1MzU3MzcsImV4cCI6MjA5OTExMTczN30.HOkM0L36F-L80LMqjrZxXFtt0DopXvh4BsLNjn7FAtQ';
+const CHAT_TABLE = 'open_play_chat_messages';
+const MEMBERSHIP_TABLE = 'open_play_confirmed_participants';
+const CHAT_HISTORY_LIMIT = 200;
+
+let sbClient = null;
+function sbReady(){
+  if(sbClient) return true;
+  if(!window.supabase || !window.supabase.createClient) return false;
+  sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  return true;
+}
+
+const ChatAPI = {
+  async loadRecent(eventId){
+    if(!sbReady()) return [];
+    const { data, error } = await sbClient
+      .from(CHAT_TABLE)
+      .select('*')
+      .eq('event_id', eventId)
+      .order('created_at', { ascending: true })
+      .limit(CHAT_HISTORY_LIMIT);
+    if(error){ console.error('[chat] load failed', error); return []; }
+    return data || [];
+  },
+  async send(eventId, user, body){
+    if(!sbReady()) throw new Error('Chat isn\u2019t available right now.');
+    const { error } = await sbClient.from(CHAT_TABLE).insert({
+      event_id: String(eventId),
+      user_id: user.id,
+      user_name: user.display_name || 'Player',
+      avatar_url: user.avatar_url || null,
+      body: body,
+    });
+    if(error) throw error;
+  },
+  // Subscribes to new inserts for one event's chat. Returns a channel
+  // handle to pass to unsubscribe() when the chat view closes.
+  subscribe(eventId, onInsert){
+    if(!sbReady()) return null;
+    return sbClient
+      .channel('open-play-chat-' + eventId)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: CHAT_TABLE,
+        filter: 'event_id=eq.' + eventId,
+      }, function(payload){ onInsert(payload.new); })
+      .subscribe();
+  },
+  unsubscribe(channel){
+    if(channel && sbClient) sbClient.removeChannel(channel);
+  },
+};
+
+// Mirrors "who the host has confirmed" into Supabase so the chat table's
+// RLS policy can require it. Called right after the corresponding
+// Firestore write succeeds (see call sites in OpenPlayAPI below). Every
+// method is best-effort: chat membership syncing must never break the
+// underlying RSVP/host action if Supabase happens to be unreachable, so
+// failures are logged, not thrown.
+const ChatMembership = {
+  async add(eventId, userId, userName, avatarUrl, role){
+    if(!sbReady() || !eventId || !userId) return;
+    try{
+      const { error } = await sbClient.from(MEMBERSHIP_TABLE).upsert({
+        event_id: String(eventId),
+        user_id: userId,
+        user_name: userName || null,
+        avatar_url: avatarUrl || null,
+        role: role || 'participant',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'event_id,user_id' });
+      if(error) console.error('[chat] membership add failed', error);
+    }catch(err){ console.error('[chat] membership add failed', err); }
+  },
+  async remove(eventId, userId){
+    if(!sbReady() || !eventId || !userId) return;
+    try{
+      const { error } = await sbClient.from(MEMBERSHIP_TABLE)
+        .delete().eq('event_id', String(eventId)).eq('user_id', userId);
+      if(error) console.error('[chat] membership remove failed', error);
+    }catch(err){ console.error('[chat] membership remove failed', err); }
+  },
+  async removeAllForEvent(eventId){
+    if(!sbReady() || !eventId) return;
+    try{
+      const { error } = await sbClient.from(MEMBERSHIP_TABLE)
+        .delete().eq('event_id', String(eventId));
+      if(error) console.error('[chat] membership cleanup failed', error);
+    }catch(err){ console.error('[chat] membership cleanup failed', err); }
+  },
+};
+
+/* --- SQL to run once in the Supabase project's SQL editor ---------------
+
+-- If you already ran the earlier version of this SQL (a single open
+-- chat table), run this first to swap in the stricter policy:
+--   drop policy if exists "anyone can post chat" on open_play_chat_messages;
+
+create table if not exists open_play_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  event_id text not null,
+  user_id text not null,
+  user_name text not null,
+  avatar_url text,
+  body text not null check (char_length(body) between 1 and 500),
+  created_at timestamptz not null default now()
+);
+create index if not exists open_play_chat_messages_event_idx
+  on open_play_chat_messages (event_id, created_at);
+
+create table if not exists open_play_confirmed_participants (
+  event_id text not null,
+  user_id text not null,
+  user_name text,
+  avatar_url text,
+  role text not null default 'participant',
+  updated_at timestamptz not null default now(),
+  primary key (event_id, user_id)
+);
+
+alter table open_play_chat_messages enable row level security;
+alter table open_play_confirmed_participants enable row level security;
+
+-- Reads stay open to anyone who has the event id (same limitation as
+-- before: there's no verified identity to restrict reads by).
+create policy "anyone can read chat" on open_play_chat_messages
+  for select using (true);
+
+-- Writes now require the (event_id, user_id) pair to be a confirmed
+-- participant — this is the actual "host has to confirm you" gate.
+create policy "confirmed participants can post chat" on open_play_chat_messages
+  for insert with check (
+    char_length(body) between 1 and 500
+    and exists (
+      select 1 from open_play_confirmed_participants p
+      where p.event_id = open_play_chat_messages.event_id
+        and p.user_id = open_play_chat_messages.user_id
+    )
+  );
+
+-- The membership table itself is synced by trusted client code (Firestore
+-- security rules already gate who can confirm/remove a joiner), so it's
+-- readable/writable the same way the old fully-open chat table was.
+create policy "membership readable" on open_play_confirmed_participants
+  for select using (true);
+create policy "membership syncable" on open_play_confirmed_participants
+  for insert with check (true);
+create policy "membership syncable update" on open_play_confirmed_participants
+  for update using (true);
+create policy "membership syncable delete" on open_play_confirmed_participants
+  for delete using (true);
+
+alter publication supabase_realtime add table open_play_chat_messages;
+--------------------------------------------------------------------- */
+
 // Persistent per-browser identifier used only to rate-limit how many
 // accounts can be *registered* from one device — not used for tracking,
 // ads, or anything beyond this spam guard. Falls back to null (guard
@@ -224,6 +414,7 @@ const OpenPlayAPI = {
       created_at: firebase.firestore.FieldValue.serverTimestamp(),
     }, payload);
     const ref = await window.fbDb.collection(EVENTS_COL).add(event);
+    ChatMembership.add(ref.id, host.id, host.display_name, host.avatar_url, 'host');
     return Object.assign({ id: ref.id }, event);
   },
   async cancelEvent(eventId){
@@ -244,6 +435,7 @@ const OpenPlayAPI = {
     rsvpsSnap.docs.forEach(function(d){ batch.delete(d.ref); });
     batch.delete(window.fbDb.collection(EVENTS_COL).doc(eventId));
     await batch.commit();
+    ChatMembership.removeAllForEvent(eventId);
   },
 
   // ----- rsvps -----
@@ -326,6 +518,7 @@ const OpenPlayAPI = {
   async confirmJoiner(eventId, playerId){
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
+    let confirmedRsvp = null;
     await window.fbDb.runTransaction(async function(tx){
       const eventSnap = await tx.get(eventRef);
       if(!eventSnap.exists) throw new Error('This event no longer exists.');
@@ -341,7 +534,11 @@ const OpenPlayAPI = {
       }
       tx.update(rsvpRef, { status: 'confirmed' });
       tx.update(eventRef, { rsvp_count: (ev.rsvp_count || 0) + 1 });
+      confirmedRsvp = rsvpSnap.data();
     });
+    if(confirmedRsvp){
+      ChatMembership.add(eventId, playerId, confirmedRsvp.player_name, confirmedRsvp.player_photo_url, 'participant');
+    }
   },
   // Host moves a confirmed joiner back to the waitlist — e.g. to free a
   // seat for someone else, or because the joiner hasn't paid. This does
@@ -349,11 +546,13 @@ const OpenPlayAPI = {
   async moveToWaitlist(eventId, playerId){
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
+    let moved = false;
     await window.fbDb.runTransaction(async function(tx){
       const rsvpSnap = await tx.get(rsvpRef);
       const eventSnap = await tx.get(eventRef);
       if(!rsvpSnap.exists || rsvpSnap.data().status !== 'confirmed') return;
       tx.update(rsvpRef, { status: 'waitlist' });
+      moved = true;
       if(eventSnap.exists){
         const ev = eventSnap.data();
         const updates = { rsvp_count: Math.max(0, (ev.rsvp_count || 0) - 1) };
@@ -366,6 +565,7 @@ const OpenPlayAPI = {
         tx.update(eventRef, updates);
       }
     });
+    if(moved) ChatMembership.remove(eventId, playerId);
   },
   // Host toggles a joiner's payment status. Every joiner starts unpaid.
   async markPaid(eventId, playerId, paid){
@@ -395,6 +595,7 @@ const OpenPlayAPI = {
   async _releaseSpot(eventId, playerId, newStatus){
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
+    let freedSeat = false;
     await window.fbDb.runTransaction(async function(tx){
       // Firestore transactions require ALL reads before ANY writes, so both
       // gets happen up front regardless of which branch below needs them.
@@ -403,7 +604,7 @@ const OpenPlayAPI = {
       if(!rsvpSnap.exists) return;
       const cur = rsvpSnap.data();
       if(cur.status !== 'confirmed' && cur.status !== 'waitlist') return;
-      const freedSeat = cur.status === 'confirmed';
+      freedSeat = cur.status === 'confirmed';
       tx.update(rsvpRef, { status: newStatus });
       if(eventSnap.exists){
         const ev = eventSnap.data();
@@ -418,6 +619,9 @@ const OpenPlayAPI = {
         if(Object.keys(updates).length) tx.update(eventRef, updates);
       }
     });
+    // Only a *confirmed* seat implied chat membership — someone leaving
+    // the waitlist was never added to the confirmed-participants list.
+    if(freedSeat) ChatMembership.remove(eventId, playerId);
   }
 };
 window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
@@ -1105,6 +1309,10 @@ async function opOpenEventDetail(eventId){
   const participantsButton = (!isHost && !isSubHost)
     ? `<button class="btn btn-ghost" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
+  const canChat = isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested);
+  const chatButton = canChat
+    ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Event Chat</button>`
+    : '';
 
   openModal(`
     <div class="modal-title">${esc(ev.title)}</div>
@@ -1123,10 +1331,121 @@ async function opOpenEventDetail(eventId){
       ${actionButton}
       ${subHostButton}
       ${participantsButton}
+      ${chatButton}
       <button class="btn btn-ghost" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
       <button class="btn btn-ghost" data-action="modal-close">Close</button>
     </div>
   `);
+}
+
+/* ---------------- CHAT VIEW ---------------- */
+let opChatChannel = null;
+
+function opChatCleanup(){
+  if(opChatChannel){ ChatAPI.unsubscribe(opChatChannel); opChatChannel = null; }
+}
+
+// The chat modal can be left in several ways (Back button, the generic
+// modal-close handler in script.js, tapping the overlay, Esc...) and we
+// don't own most of those code paths. Rather than hook each one, watch
+// for the message list leaving the DOM and unsubscribe then.
+function opWatchChatCleanup(container){
+  if(!container || !window.MutationObserver) return;
+  const obs = new MutationObserver(function(){
+    if(!document.body.contains(container)){
+      opChatCleanup();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
+function opChatTime(iso){
+  try{
+    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }catch(err){ return ''; }
+}
+
+function opChatMessageEl(m, isMine){
+  const wrap = document.createElement('div');
+  wrap.className = 'op-chat-msg' + (isMine ? ' op-chat-msg-mine' : '');
+  wrap.innerHTML = `
+    ${!isMine ? `<div class="op-chat-msg-author">${esc(m.user_name || 'Player')}</div>` : ''}
+    <div class="op-chat-bubble">${esc(m.body || '')}</div>
+    <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
+  return wrap;
+}
+
+async function opRenderEventChat(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev) return;
+  if(!opUI.user){
+    opOpenAuthModal('join the chat', function(){ opRenderEventChat(eventId); });
+    return;
+  }
+
+  opChatCleanup();
+
+  openModal(`
+    <div class="modal-title">${esc(ev.title)} · Chat</div>
+    <div class="modal-sub">Only shown to people in this game — chat itself isn\u2019t private, see note in code</div>
+    <div class="op-chat-messages" id="opChatMessages"><div class="op-empty" style="padding:24px;">Loading messages\u2026</div></div>
+    <form class="op-chat-form" id="opChatForm">
+      <input type="text" class="op-input op-chat-input" id="opChatInput" placeholder="Message the group\u2026" maxlength="500" autocomplete="off" />
+      <button type="submit" class="btn btn-primary op-chat-send">Send</button>
+    </form>
+    <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>
+  `);
+
+  const listEl = document.getElementById('opChatMessages');
+  opWatchChatCleanup(listEl);
+  if(!sbReady()){
+    if(listEl) listEl.innerHTML = `<div class="op-empty">Chat isn\u2019t available right now.</div>`;
+    return;
+  }
+
+  function appendMessage(m){
+    if(!listEl) return;
+    const nearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 60;
+    const emptyNote = listEl.querySelector('.op-empty');
+    if(emptyNote) emptyNote.remove();
+    listEl.appendChild(opChatMessageEl(m, !!(opUI.user && m.user_id === opUI.user.id)));
+    if(nearBottom) listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  const messages = await ChatAPI.loadRecent(eventId);
+  if(listEl){
+    listEl.innerHTML = '';
+    if(!messages.length){
+      listEl.innerHTML = `<div class="op-empty" style="padding:24px;">No messages yet \u2014 say hi \ud83d\udc4b</div>`;
+    } else {
+      messages.forEach(appendMessage);
+    }
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  opChatChannel = ChatAPI.subscribe(eventId, appendMessage);
+
+  const form = document.getElementById('opChatForm');
+  if(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const input = document.getElementById('opChatInput');
+      const body = (input.value || '').trim();
+      if(!body) return;
+      const btn = form.querySelector('.op-chat-send');
+      if(btn) btn.disabled = true;
+      input.value = '';
+      try{
+        await ChatAPI.send(eventId, opUI.user, body);
+      }catch(err){
+        toast(opFriendlyError(err, 'Message didn\u2019t send \u2014 try again.'), 'error');
+        input.value = body;
+      }
+      if(btn) btn.disabled = false;
+      input.focus();
+    });
+  }
 }
 
 /* ---------------- PARTICIPANTS (read-only, for joiners) ---------------- */
@@ -1760,6 +2079,10 @@ document.addEventListener('click', async function(e){
     }
     case 'op-open-event': {
       await opOpenEventDetail(t.dataset.id);
+      break;
+    }
+    case 'op-open-chat': {
+      await opRenderEventChat(t.dataset.id);
       break;
     }
     case 'op-join-event': {
