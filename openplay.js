@@ -978,55 +978,38 @@ function opMarkChatRead(eventId, iso){
 // the badge, since the person is already looking at them.
 let opChatOpenEventId = null;
 
-// One lightweight realtime subscription per chat-enabled event, purely
-// to flip the badge the instant a new message arrives. Separate from
-// opChatChannel (in the CHAT VIEW section below), which is the single,
-// richer subscription for whichever chat is actually open in the modal.
-let opUnreadChannels = {};
-function opSyncUnreadChannels(ids){
-  const idSet = {};
-  ids.forEach(function(id){ idSet[id] = true; });
-  Object.keys(opUnreadChannels).forEach(function(id){
-    if(!idSet[id]){ ChatAPI.unsubscribe(opUnreadChannels[id]); delete opUnreadChannels[id]; }
-  });
-  ids.forEach(function(id){
-    if(opUnreadChannels[id]) return;
-    opUnreadChannels[id] = ChatAPI.subscribe(id, {
-      onInsert: function(msg){
-        if(id === opChatOpenEventId || (opUI.user && msg.user_id === opUI.user.id)){
-          opMarkChatRead(id, msg.created_at);
-        } else {
-          opUI.unreadChatEvents[id] = true;
-        }
-        maybeRerenderOpenPlay();
-      },
-    }, 'unread');
-  });
-}
-function opTeardownUnreadChannels(){
-  Object.keys(opUnreadChannels).forEach(function(id){ ChatAPI.unsubscribe(opUnreadChannels[id]); });
-  opUnreadChannels = {};
-}
-
 // Refetches which events this user can chat in and whether each has
-// unread messages. Throttled since it fires opportunistically (every
-// Discover/Host render, plus a slow poll) rather than only on demand.
+// unread messages. Poll-based by design (no realtime subscription here) —
+// a badge doesn't need millisecond accuracy, and one channel per visible
+// event was the main thing driving up Supabase Realtime's per-connection
+// channel count and monthly message quota on the free tier. Throttled
+// since it fires opportunistically (every Discover/Host render, plus a
+// slow poll) rather than only on demand.
 let opUnreadRefreshInFlight = false;
 let opLastUnreadRefresh = 0;
 async function opRefreshChatUnread(force){
   if(!opUI.user || !sbReady()){
     opUI.unreadChatEvents = {};
-    opTeardownUnreadChannels();
     return;
   }
+  // Skip while the tab is in the background — nobody's looking at the
+  // badge, and it'll catch up the moment the tab regains focus (see the
+  // visibilitychange listener below).
+  if(!force && typeof document !== 'undefined' && document.hidden) return;
   const now = Date.now();
   if(!force && now - opLastUnreadRefresh < 20000) return; // throttle
   if(opUnreadRefreshInFlight) return;
   opUnreadRefreshInFlight = true;
   opLastUnreadRefresh = now;
   try{
-    const ids = await ChatAPI.getMyEventIds(opUI.user.id);
-    opSyncUnreadChannels(ids);
+    const allIds = await ChatAPI.getMyEventIds(opUI.user.id);
+    // Ended events can't receive new chat messages, so there's no point
+    // fetching or tracking their read state — keeps the query (and the
+    // id set generally) bounded to games that are actually still live.
+    const ids = allIds.filter(function(id){
+      const ev = opUI.events.find(function(e){ return e.id === id; });
+      return !ev || !opIsEnded(ev);
+    });
     if(!ids.length){ opUI.unreadChatEvents = {}; return; }
     const latestMap = await ChatAPI.getLatestTimestamps(ids);
     const unread = {};
@@ -1053,6 +1036,15 @@ async function opRefreshChatUnread(force){
 // unrelated rerender happened to fire. Poll once a minute instead so the
 // Discover badges stay accurate on their own while the tab is open.
 setInterval(function(){ maybeRerenderOpenPlay(); opRefreshChatUnread(); }, 60 * 1000);
+
+// opRefreshChatUnread() no-ops while the tab is hidden (see above), so
+// catch up immediately on refocus rather than waiting up to a minute for
+// the next poll tick.
+if(typeof document !== 'undefined'){
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) opRefreshChatUnread(true);
+  });
+}
 
 function opHandleSharedLink(){
   if(opUI._sharedLinkHandled) return;
@@ -1114,7 +1106,6 @@ function opBootReady(){
     opUI.user = user;
     opUI.authReady = true;
     if(signedOut){
-      opTeardownUnreadChannels();
       opUI.unreadChatEvents = {};
     } else if(user){
       opRefreshChatUnread(true);
