@@ -87,6 +87,18 @@ const CHAT_ATTACHMENT_BUCKET = 'open-play-chat-attachments';
 const CHAT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // mirrors the bucket's file_size_limit
 const CHAT_ATTACHMENT_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf';
 
+// Profile photos — a separate public Storage bucket from chat attachments,
+// keyed by user id rather than event id (one photo lives across every
+// event a person hosts/joins). See the "Profile photos" SQL comment below
+// the chat-attachments bucket setup for the bucket + policy definitions.
+// The resulting public URL is written onto the Firebase Auth user's own
+// photoURL (via updateProfile), which is where avatar_url already reads
+// from everywhere else in the app (see mapAuthUser) — so nothing else
+// needs to change to pick the new photo up.
+const AVATAR_BUCKET = 'open-play-avatars';
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
+
 // Private messages ("PM the host") — a separate table from the group chat
 // above. One thread per (event_id, participant_id) pair, between that
 // participant and the event's host. Anyone with a *live* rsvp (confirmed
@@ -664,6 +676,40 @@ create policy "authors can delete their own chat attachments" on storage.objects
     )
   );
 
+-- Profile photos: a separate public Storage bucket from chat attachments,
+-- 5MB/file, images only. Files are stored at "<user_id>/<timestamp>_<filename>"
+-- so the policy below can check the uploader owns the folder they're
+-- writing into (no confirmed-participant check needed here — anyone
+-- signed in can set their own photo, unlike per-event chat attachments).
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'open-play-avatars', 'open-play-avatars', true, 5242880,
+  array['image/jpeg','image/png','image/gif','image/webp']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "avatars public read" on storage.objects;
+create policy "avatars public read" on storage.objects
+  for select using (bucket_id = 'open-play-avatars');
+
+-- NOTE ON AUTH applies here too (see the note near the top of this file):
+-- Supabase has no verified session tied to the Firebase user, so this can
+-- only check "does the uploaded path's first folder match the user id the
+-- client claims", not cryptographically prove it. Good enough to stop
+-- accidental cross-writes; a determined attacker who already knew another
+-- user's uid could still overwrite their folder. Same residual limitation
+-- as chat attachments/membership above.
+drop policy if exists "users can upload their own avatar" on storage.objects;
+create policy "users can upload their own avatar" on storage.objects
+  for insert with check (bucket_id = 'open-play-avatars');
+
+drop policy if exists "users can replace their own avatar" on storage.objects;
+create policy "users can replace their own avatar" on storage.objects
+  for update using (bucket_id = 'open-play-avatars');
+
 -- ---------------- PRIVATE MESSAGES (DM: participant <-> host) ----------------
 -- One thread per (event_id, participant_id). Only the host and that one
 -- participant are meant to use a given thread; see the "Private messages"
@@ -816,6 +862,27 @@ const OpenPlayAPI = {
   async signOut(){
     if(!fbReady()) return;
     await window.fbAuth.signOut();
+  },
+
+  // ----- profile photo (Supabase Storage, written onto the Firebase user) -----
+  // Uploads to the avatars bucket, then sets it as the current Firebase Auth
+  // user's photoURL — that's the single field avatar_url reads everywhere
+  // (see mapAuthUser), so Google sign-ins and username/password accounts
+  // both pick up a custom photo the same way. Returns the new public URL.
+  async uploadAvatar(userId, file){
+    if(!sbReady()) throw new Error('Photo upload isn\u2019t available right now.');
+    if(!fbReady() || !window.fbAuth.currentUser) throw new Error('Sign in to upload a profile photo.');
+    if(!/^image\//.test(file.type || '')) throw new Error('Please choose an image file.');
+    if(file.size > AVATAR_MAX_BYTES) throw new Error('That image is too big \u2014 max 5MB.');
+    const safeName = file.name.replace(/[^a-zA-Z0-9_.\-]/g, '_').slice(-80);
+    const path = `${userId}/${Date.now()}_${safeName}`;
+    const { error: uploadErr } = await sbClient.storage
+      .from(AVATAR_BUCKET)
+      .upload(path, file, { contentType: file.type || 'image/jpeg' });
+    if(uploadErr) throw uploadErr;
+    const { data: pub } = sbClient.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+    await window.fbAuth.currentUser.updateProfile({ photoURL: pub.publicUrl });
+    return pub.publicUrl;
   },
 
   // ----- auth (Firebase Auth, username + password) -----
@@ -1971,7 +2038,11 @@ function opAuthChip(){
       : `<div class="op-user-avatar op-user-avatar-fallback">${esc((opUI.user.display_name || '?').charAt(0).toUpperCase())}</div>`;
     return `
       <div class="op-user-chip">
-        ${avatar}
+        <div class="op-user-avatar-wrap">
+          ${avatar}
+          <button type="button" class="op-avatar-edit-btn" data-action="op-change-avatar" title="Change profile photo">\ud83d\udcf7</button>
+          <input type="file" id="opAvatarFileInput" accept="${AVATAR_ACCEPT}" style="display:none;" />
+        </div>
         <span class="op-user-name">${esc(opUI.user.display_name)}</span>
         <button class="op-user-signout" data-action="op-sign-out" title="Sign out">Sign out</button>
       </div>`;
@@ -2708,16 +2779,52 @@ async function opRenderParticipants(eventId){
   const confirmed = rows.filter(function(r){ return r.status === 'confirmed'; });
   const waitlist = rows.filter(function(r){ return r.status === 'waitlist'; });
 
+  // Confirmed roster renders as a Reclub-style grid: a square photo tile
+  // per person, name underneath, plus dashed "open" tiles for any spots
+  // still unfilled — so at a glance you can see exactly how full the game
+  // is, not just a count. Only meaningful when the host set a max_players
+  // cap; uncapped games just show filled tiles and no blanks. Computed off
+  // the confirmed rows we just fetched (rather than ev.rsvp_count, which
+  // can lag a beat behind Firestore) so the tile count is always accurate.
+  let emptySlots = 0;
+  if(ev.max_players){
+    const filledForCap = confirmed.length + (opHostCountsTowardMax(ev) ? 1 : 0);
+    emptySlots = Math.max(0, ev.max_players - filledForCap);
+  }
+
+  function participantTile(r){
+    const avatar = r.player_photo_url
+      ? `<img class="op-participant-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
+      : `<div class="op-participant-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
+    const isSubHost = r.player_id && ev.sub_host_id === r.player_id;
+    const tag = r.tag ? `<span class="op-participant-tag">${esc(r.tag)}</span>`
+      : isSubHost ? `<span class="op-participant-tag">Sub host</span>`
+      : r.is_guest ? `<span class="op-participant-tag op-participant-tag-muted">Guest</span>`
+      : '';
+    return `
+      <div class="op-participant-tile">
+        ${avatar}
+        <span class="op-participant-name">${esc(r.player_name || 'Player')}</span>
+        ${tag}
+      </div>`;
+  }
+
+  function emptyTile(){
+    return `
+      <div class="op-participant-tile">
+        <div class="op-participant-avatar op-participant-empty">+</div>
+        <span class="op-participant-name op-participant-name-empty">Open</span>
+      </div>`;
+  }
+
   function readOnlyRow(r){
     const avatar = r.player_photo_url
       ? `<img class="op-user-avatar" src="${esc(r.player_photo_url)}" alt="" referrerpolicy="no-referrer" />`
       : `<div class="op-user-avatar op-user-avatar-fallback">${esc((r.player_name || '?').charAt(0).toUpperCase())}</div>`;
-    const isSubHost = r.player_id && ev.sub_host_id === r.player_id;
     return `
       <div class="op-joiner-row">
         ${avatar}
         <span class="op-joiner-name">${esc(r.player_name || 'Player')}</span>
-        ${isSubHost ? '<span class="op-badge op-badge-subhost">Sub host</span>' : ''}
         ${r.is_guest ? `<span class="op-badge op-badge-muted">Guest of ${esc(r.invited_by_name || 'a player')}</span>` : ''}
       </div>`;
   }
@@ -2727,9 +2834,10 @@ async function opRenderParticipants(eventId){
     <div class="modal-sub">${esc(ev.title)}</div>
 
     <div class="op-h-title" style="font-size:14px; margin-top:14px;">Confirmed (${opConfirmedHeaderLabel(ev, confirmed.length)})</div>
-    <div class="op-joiner-list">
-      ${readOnlyRow({ player_name: (ev.host_name || 'Host') + ' (Host)', player_photo_url: ev.host_photo_url })}
-      ${confirmed.map(readOnlyRow).join('')}
+    <div class="op-participant-grid">
+      ${participantTile({ player_name: ev.host_name || 'Host', player_photo_url: ev.host_photo_url, tag: 'Host' })}
+      ${confirmed.map(participantTile).join('')}
+      ${Array.from({ length: emptySlots }).map(emptyTile).join('')}
     </div>
 
     <div class="op-h-title" style="font-size:14px; margin-top:18px;">Waitlist (${waitlist.length})</div>
@@ -3442,6 +3550,12 @@ document.addEventListener('click', async function(e){
       renderActiveView();
       break;
     }
+    case 'op-change-avatar': {
+      const wrap = t.closest('.op-user-avatar-wrap');
+      const input = wrap ? wrap.querySelector('#opAvatarFileInput') : document.getElementById('opAvatarFileInput');
+      if(input) input.click();
+      break;
+    }
     case 'op-inline-auth-tab': {
       opInlineAuthMode = t.dataset.mode === 'register' ? 'register' : 'login';
       renderActiveView();
@@ -3746,6 +3860,37 @@ document.addEventListener('click', async function(e){
       }
       break;
     }
+  }
+});
+
+// Change handler for the hidden profile-photo file input (see the
+// op-change-avatar case above, which just clicks this input open — the
+// actual upload happens here once a file is picked). Delegated at the
+// document level, same reasoning as the click handler: the chip re-renders
+// often (three different views embed opAuthChip), so a per-render wire-up
+// would be easy to miss on one of them.
+document.addEventListener('change', async function(e){
+  const input = e.target;
+  if(!input || input.id !== 'opAvatarFileInput') return;
+  const file = input.files && input.files[0];
+  input.value = ''; // reset so picking the same file again still fires change
+  if(!file) return;
+  if(!opUI.user){ toast('Sign in to upload a profile photo.', 'error'); return; }
+  if(!/^image\//.test(file.type || '')){ toast('Please choose an image file.', 'error'); return; }
+  if(file.size > AVATAR_MAX_BYTES){ toast('That image is too big — max 5MB.', 'error'); return; }
+
+  const wrap = input.closest('.op-user-avatar-wrap');
+  const editBtn = wrap ? wrap.querySelector('.op-avatar-edit-btn') : null;
+  if(editBtn) editBtn.disabled = true;
+  try{
+    const url = await OpenPlayAPI.uploadAvatar(opUI.user.id, file);
+    opUI.user = Object.assign({}, opUI.user, { avatar_url: url });
+    toast('Profile photo updated!', 'success');
+    renderActiveView();
+  }catch(err){
+    console.error(err);
+    toast(opFriendlyError(err, 'Couldn\u2019t upload that photo. Please try again.'), 'error');
+    if(editBtn) editBtn.disabled = false;
   }
 });
 
