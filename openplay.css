@@ -233,3 +233,13 @@
 .op-chat-form{ display:flex; gap:8px; align-items:center; }
 .op-chat-input{ flex:1; margin-bottom:0; }
 .op-chat-send{ flex:none; padding:10px 16px; }
+
+/* Unread chat notification dot — lights up on event cards (op-card-title)
+   and on the "Event Chat" button in event detail when there are messages
+   the current user hasn't opened the chat to see yet. */
+.op-chat-unread-dot{
+  display:inline-block; width:8px; height:8px; border-radius:50%;
+  background:var(--loss); margin-left:6px; vertical-align:middle;
+  box-shadow:0 0 0 2px var(--surface);
+}
+.op-chat-unread-dot-btn{ margin-left:8px; }
