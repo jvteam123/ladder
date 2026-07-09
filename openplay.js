@@ -86,6 +86,21 @@ const CHAT_ATTACHMENT_BUCKET = 'open-play-chat-attachments';
 const CHAT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // mirrors the bucket's file_size_limit
 const CHAT_ATTACHMENT_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf';
 
+// Private messages ("PM the host") — a separate table from the group chat
+// above. One thread per (event_id, participant_id) pair, between that
+// participant and the event's host. Anyone with a *live* rsvp (confirmed
+// OR waitlist — matches myRsvpForEvent) is allowed to start a thread; see
+// DmEligibility below for how that's mirrored into Supabase so the RLS
+// policy can check it (same residual identity-verification limitation as
+// ChatMembership — see "NOTE ON AUTH" near the top of this file: this
+// stops randoms from posting, but doesn't cryptographically prove who's
+// posting). Reads have the same limitation as group chat reads (no
+// verified Supabase session tied to the Firebase user), so this is
+// "private by convention", not end-to-end private — flagged in the UI.
+const DM_TABLE = 'open_play_dm_messages';
+const DM_ELIGIBLE_TABLE = 'open_play_dm_eligible_participants';
+const DM_HISTORY_LIMIT = 200;
+
 let sbClient = null;
 function sbReady(){
   if(sbClient) return true;
@@ -285,6 +300,114 @@ const ChatMembership = {
         .delete().eq('event_id', String(eventId));
       if(error) console.error('[chat] membership cleanup failed', error);
     }catch(err){ console.error('[chat] membership cleanup failed', err); }
+  },
+};
+
+/* ---------------- PRIVATE MESSAGES (DM) wire calls ---------------- */
+const DmAPI = {
+  // All messages in one (event, participant) thread, oldest first.
+  async loadThread(eventId, participantId){
+    if(!sbReady()) return [];
+    const { data, error } = await sbClient
+      .from(DM_TABLE)
+      .select('*')
+      .eq('event_id', String(eventId))
+      .eq('participant_id', participantId)
+      .order('created_at', { ascending: true })
+      .limit(DM_HISTORY_LIMIT);
+    if(error){ console.error('[dm] load failed', error); return []; }
+    return data || [];
+  },
+  async send(eventId, hostId, participantId, sender, body){
+    if(!sbReady()) throw new Error('Messaging isn\u2019t available right now.');
+    const { data, error } = await sbClient.from(DM_TABLE).insert({
+      event_id: String(eventId),
+      host_id: hostId,
+      participant_id: participantId,
+      sender_id: sender.id,
+      sender_name: sender.display_name || 'Player',
+      sender_avatar_url: sender.avatar_url || null,
+      body: body,
+    }).select().single();
+    if(error) throw error;
+    return data;
+  },
+  // For the host's "Messages" list: the single latest message per
+  // participant thread on this event, newest thread first.
+  async listThreadsForHost(eventId){
+    if(!sbReady()) return [];
+    const { data, error } = await sbClient
+      .from(DM_TABLE)
+      .select('*')
+      .eq('event_id', String(eventId))
+      .order('created_at', { ascending: false });
+    if(error){ console.error('[dm] listThreadsForHost failed', error); return []; }
+    const seen = {};
+    const threads = [];
+    (data || []).forEach(function(m){
+      if(seen[m.participant_id]) return;
+      seen[m.participant_id] = true;
+      threads.push(m);
+    });
+    return threads;
+  },
+  subscribe(eventId, participantId, onInsert, channelSuffix){
+    if(!sbReady()) return null;
+    return sbClient
+      .channel('open-play-dm-' + eventId + '-' + participantId + (channelSuffix ? '-' + channelSuffix : ''))
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: DM_TABLE,
+        filter: 'event_id=eq.' + eventId,
+      }, function(payload){
+        if(payload.new.participant_id === participantId && onInsert) onInsert(payload.new);
+      })
+      .subscribe();
+  },
+  unsubscribe(channel){
+    if(channel && sbClient) sbClient.removeChannel(channel);
+  },
+};
+
+// Mirrors "who currently holds a live rsvp (confirmed or waitlist) on this
+// event" into Supabase, so the DM insert policy can require it before
+// letting a participant message the host. Populated/cleared alongside the
+// Firestore rsvp writes in OpenPlayAPI (rsvp / _releaseSpot / deleteEvent)
+// — same best-effort, never-throw shape as ChatMembership above.
+const DmEligibility = {
+  async add(eventId, userId, userName, avatarUrl){
+    if(!sbReady() || !eventId || !userId) return;
+    try{
+      const { error } = await sbClient.from(DM_ELIGIBLE_TABLE).upsert({
+        event_id: String(eventId),
+        user_id: userId,
+        user_name: userName || null,
+        avatar_url: avatarUrl || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'event_id,user_id' });
+      if(error) console.error('[dm] eligibility add failed', error);
+    }catch(err){ console.error('[dm] eligibility add failed', err); }
+  },
+  async remove(eventId, userId){
+    if(!sbReady() || !eventId || !userId) return;
+    try{
+      const { error } = await sbClient.from(DM_ELIGIBLE_TABLE)
+        .delete().eq('event_id', String(eventId)).eq('user_id', userId);
+      if(error) console.error('[dm] eligibility remove failed', error);
+    }catch(err){ console.error('[dm] eligibility remove failed', err); }
+  },
+  async removeAllForEvent(eventId){
+    if(!sbReady() || !eventId) return;
+    try{
+      const { error } = await sbClient.from(DM_ELIGIBLE_TABLE)
+        .delete().eq('event_id', String(eventId));
+      if(error) console.error('[dm] eligibility cleanup failed', error);
+    }catch(err){ console.error('[dm] eligibility cleanup failed', err); }
+  },
+  async listForEvent(eventId){
+    if(!sbReady() || !eventId) return [];
+    const { data, error } = await sbClient.from(DM_ELIGIBLE_TABLE).select('*').eq('event_id', String(eventId));
+    if(error){ console.error('[dm] listForEvent failed', error); return []; }
+    return data || [];
   },
 };
 
@@ -501,6 +624,97 @@ create policy "authors can delete their own chat attachments" on storage.objects
         and p.user_id = (storage.foldername(name))[2]
     )
   );
+
+-- ---------------- PRIVATE MESSAGES (DM: participant <-> host) ----------------
+-- One thread per (event_id, participant_id). Only the host and that one
+-- participant are meant to use a given thread; see the "Private messages"
+-- comment near DM_TABLE above for the honest limitation on read privacy.
+create table if not exists open_play_dm_messages (
+  id uuid primary key default gen_random_uuid(),
+  event_id text not null,
+  host_id text not null,
+  participant_id text not null,
+  sender_id text not null,
+  sender_name text not null,
+  sender_avatar_url text,
+  body text not null,
+  created_at timestamptz not null default now(),
+  constraint open_play_dm_messages_body_check check (char_length(body) between 1 and 500),
+  constraint open_play_dm_messages_sender_check check (sender_id = host_id or sender_id = participant_id),
+  constraint open_play_dm_messages_parties_check check (host_id <> participant_id)
+);
+create index if not exists open_play_dm_messages_thread_idx
+  on open_play_dm_messages (event_id, participant_id, created_at);
+
+create table if not exists open_play_dm_eligible_participants (
+  event_id text not null,
+  user_id text not null,
+  user_name text,
+  avatar_url text,
+  updated_at timestamptz not null default now(),
+  primary key (event_id, user_id)
+);
+
+alter table open_play_dm_messages enable row level security;
+alter table open_play_dm_eligible_participants enable row level security;
+
+-- Reads: same honest limitation as group chat (no verified Supabase
+-- session tied to the Firebase user — see "NOTE ON AUTH" at the top of
+-- this file), so this can't cryptographically restrict reads to just the
+-- two parties. Left open to anyone who has the event_id + participant_id,
+-- same trust model as the rest of this file. The UI tells users this.
+drop policy if exists "dm readable" on open_play_dm_messages;
+create policy "dm readable" on open_play_dm_messages
+  for select using (true);
+
+-- Writes: a participant can only post if they currently hold a live rsvp
+-- (confirmed or waitlist) on that event — mirrored into
+-- open_play_dm_eligible_participants by DmEligibility. The host side has
+-- no equivalent Firestore-backed check available here, so it's gated the
+-- same way group-chat host posting effectively is: trusted client code.
+drop policy if exists "eligible parties can dm" on open_play_dm_messages;
+create policy "eligible parties can dm" on open_play_dm_messages
+  for insert with check (
+    char_length(coalesce(body,'')) between 1 and 500
+    and (
+      sender_id = host_id
+      or (
+        sender_id = participant_id
+        and exists (
+          select 1 from open_play_dm_eligible_participants e
+          where e.event_id = open_play_dm_messages.event_id
+            and e.user_id = open_play_dm_messages.participant_id
+        )
+      )
+    )
+  );
+
+-- Eligibility mirror table: synced by trusted client code the same way
+-- open_play_confirmed_participants is (see that table's policies above).
+drop policy if exists "dm eligibility readable" on open_play_dm_eligible_participants;
+create policy "dm eligibility readable" on open_play_dm_eligible_participants
+  for select using (true);
+drop policy if exists "dm eligibility syncable insert" on open_play_dm_eligible_participants;
+create policy "dm eligibility syncable insert" on open_play_dm_eligible_participants
+  for insert with check (true);
+drop policy if exists "dm eligibility syncable update" on open_play_dm_eligible_participants;
+create policy "dm eligibility syncable update" on open_play_dm_eligible_participants
+  for update using (true);
+drop policy if exists "dm eligibility syncable delete" on open_play_dm_eligible_participants;
+create policy "dm eligibility syncable delete" on open_play_dm_eligible_participants
+  for delete using (true);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'open_play_dm_messages'
+  ) then
+    alter publication supabase_realtime add table open_play_dm_messages;
+  end if;
+end $$;
 --------------------------------------------------------------------- */
 
 // Persistent per-browser identifier used only to rate-limit how many
@@ -716,6 +930,7 @@ const OpenPlayAPI = {
     batch.delete(window.fbDb.collection(EVENTS_COL).doc(eventId));
     await batch.commit();
     ChatMembership.removeAllForEvent(eventId);
+    DmEligibility.removeAllForEvent(eventId);
   },
 
   // ----- rsvps -----
@@ -727,6 +942,17 @@ const OpenPlayAPI = {
     if(!snap.exists) return null;
     const data = snap.data();
     return (data.status === 'confirmed' || data.status === 'waitlist') ? Object.assign({ id: snap.id }, data) : null;
+  },
+  // Event ids where this player actually played (was confirmed at some
+  // point) — used to build their History tab alongside events they
+  // hosted/sub-hosted. Doesn't include waitlist-only or removed rsvps.
+  async listConfirmedEventIdsForPlayer(userId){
+    if(!userId) return [];
+    const snap = await window.fbDb.collection(RSVPS_COL)
+      .where('player_id', '==', userId)
+      .where('status', '==', 'confirmed')
+      .get();
+    return snap.docs.map(function(d){ return d.data().event_id; });
   },
   // All rsvp rows for an event (any status), sorted oldest-first — used by
   // the host's "Manage joiners" screen. Sorted client-side to avoid needing
@@ -769,6 +995,9 @@ const OpenPlayAPI = {
         created_at: (existing && existing.created_at) ? existing.created_at : firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
+    // Confirmed or waitlisted both count as "in line" — either way they can
+    // now PM the host (see DmEligibility above).
+    DmEligibility.add(eventId, user.id, user.display_name, user.avatar_url);
     return resultStatus;
   },
   // Player REQUESTS to leave — this no longer cancels the spot outright.
@@ -876,6 +1105,7 @@ const OpenPlayAPI = {
     const eventRef = window.fbDb.collection(EVENTS_COL).doc(eventId);
     const rsvpRef = window.fbDb.collection(RSVPS_COL).doc(rsvpDocId(eventId, playerId));
     let freedSeat = false;
+    let wasLive = false;
     await window.fbDb.runTransaction(async function(tx){
       // Firestore transactions require ALL reads before ANY writes, so both
       // gets happen up front regardless of which branch below needs them.
@@ -885,6 +1115,7 @@ const OpenPlayAPI = {
       const cur = rsvpSnap.data();
       if(cur.status !== 'confirmed' && cur.status !== 'waitlist') return;
       freedSeat = cur.status === 'confirmed';
+      wasLive = true;
       tx.update(rsvpRef, { status: newStatus });
       if(eventSnap.exists){
         const ev = eventSnap.data();
@@ -902,6 +1133,9 @@ const OpenPlayAPI = {
     // Only a *confirmed* seat implied chat membership — someone leaving
     // the waitlist was never added to the confirmed-participants list.
     if(freedSeat) ChatMembership.remove(eventId, playerId);
+    // DM eligibility covers confirmed AND waitlist, so it comes off
+    // whenever either kind of live rsvp goes away.
+    if(wasLive) DmEligibility.remove(eventId, playerId);
   }
 };
 window.OpenPlayAPI = OpenPlayAPI; // exposed for later use / debugging
@@ -913,7 +1147,10 @@ const opUI = { user: null, authReady: false, events: [], eventsReady: false, err
   // eventId -> true for every chat-enabled event (hosted, sub-hosted, or
   // joined) that has messages the signed-in user hasn't opened yet. See
   // the "CHAT UNREAD TRACKING" section below.
-  unreadChatEvents: {} };
+  unreadChatEvents: {},
+  // Event ids the signed-in user was actually confirmed in at some point —
+  // null until loaded (see opEnsureHistoryIds), used by the History tab.
+  historyParticipantIds: null };
 Object.defineProperty(opUI, 'loading', { get: function(){ return !opUI.authReady || !opUI.eventsReady; } });
 
 let opUnsubEvents = null;
@@ -945,7 +1182,28 @@ async function opCleanupOldPastEvents(){
 }
 
 function maybeRerenderOpenPlay(){
-  if(window.state && (state.tab === 'discover' || state.tab === 'host')) renderActiveView();
+  if(window.state && (state.tab === 'discover' || state.tab === 'host' || state.tab === 'history')) renderActiveView();
+}
+
+// Loads (once per sign-in) the ids of past events the signed-in user was
+// actually confirmed in, for the History tab. host_id/sub_host_id matches
+// don't need a fetch — they're already on the event doc — only "was I a
+// confirmed participant somewhere" needs a query. Guarded the same way
+// opCleanupOldPastEvents is, so a re-render mid-load doesn't refire it.
+let opHistoryIdsLoadedFor = null;
+function opEnsureHistoryIds(){
+  if(!opUI.user) return;
+  if(opHistoryIdsLoadedFor === opUI.user.id) return;
+  opHistoryIdsLoadedFor = opUI.user.id;
+  OpenPlayAPI.listConfirmedEventIdsForPlayer(opUI.user.id).then(function(ids){
+    opUI.historyParticipantIds = ids;
+    maybeRerenderOpenPlay();
+  }).catch(function(err){
+    console.error('[history] could not load participant history', err);
+    opUI.historyParticipantIds = [];
+    opHistoryIdsLoadedFor = null; // allow a retry on the next visit
+    maybeRerenderOpenPlay();
+  });
 }
 
 /* ---------------- CHAT UNREAD TRACKING ----------------
@@ -1107,6 +1365,8 @@ function opBootReady(){
     opUI.authReady = true;
     if(signedOut){
       opUI.unreadChatEvents = {};
+      opUI.historyParticipantIds = null;
+      opHistoryIdsLoadedFor = null;
     } else if(user){
       opRefreshChatUnread(true);
     }
@@ -1151,17 +1411,20 @@ function opAddNavSections(){
     { id: 'discover', label: 'Discover', desc: 'Find open play near you',
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' },
     { id: 'host', label: 'Host', desc: 'Post an open play game',
-      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>' }
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>' },
+    { id: 'history', label: 'History', desc: 'Games you\u2019ve hosted or played that have ended',
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>' }
   );
 }
 
 // Wrap the core renderActiveView so 'discover' / 'host' render without touching script.js
 const _coreRenderActiveView = window.renderActiveView;
 window.renderActiveView = function(){
-  if(state && (state.tab === 'discover' || state.tab === 'host')){
+  if(state && (state.tab === 'discover' || state.tab === 'host' || state.tab === 'history')){
     const target = document.getElementById('view');
     if(state.tab === 'discover') renderDiscoverView(target);
-    else renderHostView(target);
+    else if(state.tab === 'host') renderHostView(target);
+    else renderHistoryView(target);
     return;
   }
   return _coreRenderActiveView.apply(this, arguments);
@@ -1638,6 +1901,79 @@ function renderDiscoverView(el){
   }
 }
 
+/* ---------------- HISTORY view ---------------- */
+// Past/ended games the signed-in user was part of — as host, sub host, or
+// a confirmed participant (see opEnsureHistoryIds / listConfirmedEventIdsForPlayer).
+// Cancelled events never happened, so they're excluded. Note this only
+// shows events that haven't been auto-pruned yet (see
+// MAX_PAST_EVENTS_PER_HOST / opCleanupOldPastEvents) — a host's older past
+// games age out for everyone, including people who played in them.
+function renderHistoryView(el){
+  if(!fbReady()){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Open Play isn\u2019t configured yet.<br/>Check the Firebase setup in firebase-init.js.</div></div>`;
+    return;
+  }
+  if(opUI.loading){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Loading open play\u2026</div></div>`;
+    return;
+  }
+  if(opUI.error){
+    el.innerHTML = `<div class="op-wrap"><div class="op-empty">Couldn\u2019t load open play games right now.<br/>Check your connection and try again.</div></div>`;
+    return;
+  }
+  if(!opUI.user){
+    el.innerHTML = `
+      <div class="op-wrap">
+        <div class="op-header">
+          <div>
+            <div class="op-h-title">History</div>
+            <div class="op-h-sub">Games you\u2019ve hosted or played that have ended</div>
+          </div>
+        </div>
+        <div class="op-signin-card">
+          <div class="op-signin-title">Sign in to see your history</div>
+          <div class="op-signin-sub">Past games you hosted, co-hosted, or played in will show up here, along with who else was there.</div>
+          <button class="op-google-btn" data-action="op-open-auth-modal" data-after="see your game history">${GOOGLE_G_SVG}<span>Continue with Google</span></button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  opEnsureHistoryIds(); // fire-and-forget; re-renders once loaded
+
+  const uid = opUI.user.id;
+  const stillLoadingIds = opUI.historyParticipantIds === null;
+  const confirmedIds = opUI.historyParticipantIds || [];
+  const events = opUI.events
+    .filter(function(e){
+      if(e.status === 'cancelled') return false;
+      if(!opIsEnded(e)) return false;
+      return e.host_id === uid || e.sub_host_id === uid || confirmedIds.indexOf(e.id) !== -1;
+    })
+    .sort(function(a, b){ return new Date(b.start_time || 0) - new Date(a.start_time || 0); }); // most recent first
+
+  const emptyMsg = stillLoadingIds
+    ? 'Loading your history\u2026'
+    : `No past games yet.<br/>Games you host or play in will show up here once they\u2019re over.`;
+
+  el.innerHTML = `
+    <div class="op-wrap">
+      <div class="op-header">
+        <div>
+          <div class="op-h-title">History</div>
+          <div class="op-h-sub">Games you\u2019ve hosted or played that have ended</div>
+        </div>
+      </div>
+      ${opAuthChip()}
+      ${events.length === 0 ? `
+        <div class="op-empty">${emptyMsg}</div>
+      ` : `
+        <div class="op-event-list">${events.map(opEventCard).join('')}</div>
+      `}
+    </div>
+  `;
+}
+
 function opEventCard(ev){
   const badge = OP_STATUS_BADGES[opEventStatus(ev)];
   // Lit when this event's chat has messages the current user (host, sub
@@ -1699,7 +2035,12 @@ async function opOpenEventDetail(eventId){
   const subHostButton = isSubHost
     ? `<button class="btn btn-ghost" data-action="op-manage-joiners" data-id="${ev.id}">Manage Participants (sub host)</button>`
     : '';
-  const participantsButton = (!isHost && !isSubHost)
+  // Once a game has ended, only the host/sub host and whoever was actually
+  // confirmed in it can still look up who else played — waitlisted (never
+  // got in) or removed players can't. Live/upcoming games keep the old
+  // open-to-anyone behavior.
+  const canSeeParticipants = !isHost && !isSubHost && (!ended || (!!myRsvp && myRsvp.status === 'confirmed'));
+  const participantsButton = canSeeParticipants
     ? `<button class="btn btn-ghost" data-action="op-view-participants" data-id="${ev.id}">View participants</button>`
     : '';
   const canChat = isHost || isSubHost || (!!myRsvp && myRsvp.status !== 'waitlist' && !myRsvp.leave_requested);
@@ -1707,6 +2048,14 @@ async function opOpenEventDetail(eventId){
   const chatButton = canChat
     ? `<button class="btn btn-ghost" data-action="op-open-chat" data-id="${ev.id}">\ud83d\udcac Chat${hasUnreadChat ? '<span class="op-chat-unread-dot op-chat-unread-dot-btn" title="New chat messages"></span>' : ''}</button>`
     : '';
+  // PM the host: anyone holding a live-or-was-live rsvp (confirmed or
+  // waitlist) can start a private thread with the host. The host instead
+  // gets a "Messages" button that lists every thread on this event.
+  const dmButton = isHost
+    ? `<button class="btn btn-ghost" data-action="op-open-dm-list" data-id="${ev.id}">\u2709\ufe0f Messages</button>`
+    : (!isSubHost && !!myRsvp
+      ? `<button class="btn btn-ghost" data-action="op-message-host" data-id="${ev.id}">\u2709\ufe0f Message host</button>`
+      : '');
 
   openModal(`
     <div class="modal-title">${esc(ev.title)}</div>
@@ -1726,6 +2075,7 @@ async function opOpenEventDetail(eventId){
       ${subHostButton}
       ${participantsButton}
       ${chatButton}
+      ${dmButton}
       <button class="btn btn-ghost" data-action="op-share-event" data-id="${ev.id}">Copy shareable link</button>
       <button class="btn btn-ghost" data-action="modal-close">Close</button>
     </div>
@@ -2111,6 +2461,170 @@ async function opRenderParticipants(eventId){
       <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button>
     </div>
   `);
+}
+
+/* ---------------- PRIVATE MESSAGES (DM) ---------------- */
+let opDmChannel = null;
+
+function opDmCleanup(){
+  if(opDmChannel){ DmAPI.unsubscribe(opDmChannel); opDmChannel = null; }
+}
+// Same "watch the DOM for the modal leaving" teardown trick as opWatchChatCleanup.
+function opWatchDmCleanup(container){
+  if(!container || !window.MutationObserver) return;
+  const obs = new MutationObserver(function(){
+    if(!document.body.contains(container)){
+      opDmCleanup();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
+// Builds one message bubble, reusing the same markup/classes as group chat
+// (op-chat-*) so it inherits that styling for free — DMs are plain text
+// only (no edit/unsend/attachments), so this is simpler than opChatBubbleHtml.
+function opDmBubbleHtml(m, isMine){
+  return `
+    ${!isMine ? `<div class="op-chat-msg-author">${esc(m.sender_name || 'Player')}</div>` : ''}
+    <div class="op-chat-bubble"><div class="op-chat-bubble-text">${esc(m.body || '')}</div></div>
+    <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
+}
+
+// Host-side entry point: every participant thread on this event, most
+// recently active first, so the host can see who's reached out.
+async function opRenderDmThreadList(eventId){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev || !opUI.user || ev.host_id !== opUI.user.id) return;
+  openModal(`<div class="modal-title">Messages</div><div class="op-empty" style="padding:24px;">Loading\u2026</div>`);
+  if(!sbReady()){
+    openModal(`<div class="modal-title">Messages</div><div class="op-empty">Messaging isn\u2019t available right now.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
+  let threads, eligible;
+  try{
+    [threads, eligible] = await Promise.all([
+      DmAPI.listThreadsForHost(eventId),
+      DmEligibility.listForEvent(eventId),
+    ]);
+  }catch(err){
+    console.error(err);
+    openModal(`<div class="modal-title">Messages</div><div class="op-empty">Couldn\u2019t load messages. Please try again.</div><div class="modal-actions"><button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button></div>`);
+    return;
+  }
+  // The eligibility mirror always has the participant's own name/avatar
+  // (recorded when they rsvp'd), whereas the latest message in a thread
+  // might have been sent by the host — so look names up from there rather
+  // than trusting the last message's sender fields.
+  const namesById = {};
+  eligible.forEach(function(p){ namesById[p.user_id] = { name: p.user_name, photo: p.avatar_url }; });
+
+  function threadRow(m){
+    const known = namesById[m.participant_id] || {};
+    const name = known.name || (m.sender_id === m.participant_id ? m.sender_name : 'Player');
+    const photo = known.photo || (m.sender_id === m.participant_id ? m.sender_avatar_url : null);
+    const avatar = photo
+      ? `<img class="op-user-avatar" src="${esc(photo)}" alt="" referrerpolicy="no-referrer" />`
+      : `<div class="op-user-avatar op-user-avatar-fallback">${esc((name || '?').charAt(0).toUpperCase())}</div>`;
+    return `
+      <div class="op-joiner-row" data-action="op-open-dm-thread" data-id="${ev.id}" data-participant="${esc(m.participant_id)}" data-name="${esc(name || 'Player')}" data-photo="${esc(photo || '')}" style="cursor:pointer;">
+        ${avatar}
+        <span class="op-joiner-name">${esc(name || 'Player')}</span>
+      </div>`;
+  }
+
+  openModal(`
+    <div class="modal-title">Messages</div>
+    <div class="modal-sub">${esc(ev.title)} \u2014 private threads with people who\u2019ve messaged you</div>
+    ${threads.length
+      ? `<div class="op-joiner-list">${threads.map(threadRow).join('')}</div>`
+      : `<div class="op-empty" style="padding:24px;">No one has messaged you about this game yet.</div>`}
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}">Back</button>
+    </div>
+  `);
+}
+
+// Shared 1:1 thread view — used both by a participant messaging the host,
+// and by the host opening a specific participant's thread from the list
+// above. participantName/participantPhoto are only needed for the header
+// when the participant hasn't sent a message yet (so there's nothing to
+// pull a name from otherwise) — safe to omit.
+async function opRenderDmThread(eventId, participantId, participantName, participantPhoto){
+  const ev = opUI.events.find(function(e){ return e.id === eventId; });
+  if(!ev || !opUI.user) return;
+  const isHost = ev.host_id === opUI.user.id;
+  if(!isHost && opUI.user.id !== participantId) return; // only the two parties belong here
+  const backAction = isHost
+    ? `<button class="btn btn-ghost btn-block" data-action="op-open-dm-list" data-id="${ev.id}" style="margin-top:8px;">Back to messages</button>`
+    : `<button class="btn btn-ghost btn-block" data-action="op-open-event" data-id="${ev.id}" style="margin-top:8px;">Back</button>`;
+  const headerName = isHost ? (participantName || 'Player') : (ev.host_name || 'Host');
+
+  opDmCleanup();
+
+  openModal(`
+    <div class="modal-title">${esc(headerName)}</div>
+    <div class="modal-sub">${esc(ev.title)} \u2014 private message, not the group chat. Same as group chat, this isn\u2019t end-to-end encrypted.</div>
+    <div class="op-chat-messages" id="opDmMessages"><div class="op-empty" style="padding:24px;">Loading messages\u2026</div></div>
+    <form class="op-chat-form" id="opDmForm">
+      <input type="text" class="op-input op-chat-input" id="opDmInput" placeholder="${isHost ? 'Reply\u2026' : 'Message the host\u2026'}" maxlength="500" autocomplete="off" />
+      <button type="submit" class="btn btn-primary op-chat-send">Send</button>
+    </form>
+    ${backAction}
+  `);
+
+  const listEl = document.getElementById('opDmMessages');
+  opWatchDmCleanup(listEl);
+  if(!sbReady()){
+    if(listEl) listEl.innerHTML = `<div class="op-empty">Messaging isn\u2019t available right now.</div>`;
+    return;
+  }
+
+  function appendMessage(m){
+    if(!listEl) return;
+    const nearBottom = (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight) < 60;
+    const emptyNote = listEl.querySelector('.op-empty');
+    if(emptyNote) emptyNote.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'op-chat-msg' + (m.sender_id === opUI.user.id ? ' op-chat-msg-mine' : '');
+    wrap.innerHTML = opDmBubbleHtml(m, m.sender_id === opUI.user.id);
+    listEl.appendChild(wrap);
+    if(nearBottom) listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  const messages = await DmAPI.loadThread(eventId, participantId);
+  if(listEl){
+    listEl.innerHTML = '';
+    if(!messages.length){
+      listEl.innerHTML = `<div class="op-empty" style="padding:24px;">${isHost ? 'No messages yet.' : 'Say hi \ud83d\udc4b \u2014 only the host will see this.'}</div>`;
+    } else {
+      messages.forEach(appendMessage);
+    }
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  opDmChannel = DmAPI.subscribe(eventId, participantId, function(m){ appendMessage(m); }, isHost ? 'host' : 'participant');
+
+  const form = document.getElementById('opDmForm');
+  if(form){
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const input = document.getElementById('opDmInput');
+      const body = (input.value || '').trim();
+      if(!body) return;
+      const btn = form.querySelector('.op-chat-send');
+      if(btn) btn.disabled = true;
+      input.value = '';
+      try{
+        await DmAPI.send(eventId, ev.host_id, participantId, opUI.user, body);
+      }catch(err){
+        toast(opFriendlyError(err, 'Message didn\u2019t send \u2014 try again.'), 'error');
+        input.value = body;
+      }
+      if(btn) btn.disabled = false;
+      input.focus();
+    });
+  }
 }
 
 /* ---------------- EDIT EVENT (host) ---------------- */
@@ -2722,6 +3236,22 @@ document.addEventListener('click', async function(e){
     }
     case 'op-view-participants': {
       await opRenderParticipants(t.dataset.id);
+      break;
+    }
+    case 'op-message-host': {
+      if(!opUI.user){
+        opOpenAuthModal('message the host', function(){ opRenderDmThread(t.dataset.id, opUI.user.id); });
+        break;
+      }
+      await opRenderDmThread(t.dataset.id, opUI.user.id);
+      break;
+    }
+    case 'op-open-dm-list': {
+      await opRenderDmThreadList(t.dataset.id);
+      break;
+    }
+    case 'op-open-dm-thread': {
+      await opRenderDmThread(t.dataset.id, t.dataset.participant, t.dataset.name, t.dataset.photo);
       break;
     }
     case 'op-request-leave': {
