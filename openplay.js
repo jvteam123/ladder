@@ -1412,7 +1412,7 @@ function opAddNavSections(){
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' },
     { id: 'host', label: 'Host', desc: 'Post an open play game',
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>' },
-    { id: 'history', label: 'History', desc: 'Games you\u2019ve hosted or played that have ended',
+    { id: 'history', label: 'Ended', desc: 'Games you\u2019ve hosted or played that have ended',
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>' }
   );
 }
@@ -1926,7 +1926,7 @@ function renderHistoryView(el){
       <div class="op-wrap">
         <div class="op-header">
           <div>
-            <div class="op-h-title">History</div>
+            <div class="op-h-title">Ended</div>
             <div class="op-h-sub">Games you\u2019ve hosted or played that have ended</div>
           </div>
         </div>
@@ -1960,7 +1960,7 @@ function renderHistoryView(el){
     <div class="op-wrap">
       <div class="op-header">
         <div>
-          <div class="op-h-title">History</div>
+          <div class="op-h-title">Ended</div>
           <div class="op-h-sub">Games you\u2019ve hosted or played that have ended</div>
         </div>
       </div>
