@@ -113,6 +113,14 @@ const AVATAR_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
 const DM_TABLE = 'open_play_dm_messages';
 const DM_ELIGIBLE_TABLE = 'open_play_dm_eligible_participants';
 const DM_HISTORY_LIMIT = 200;
+// DM attachments — same file types/size cap as group chat, but a separate
+// bucket keyed by (event_id, participant_id) rather than (event_id,
+// user_id), since a DM thread only ever has the two of them in it. The
+// limit is per *thread* (shared between host + participant), not per
+// sender, since either side can post files into the same conversation —
+// see the Storage insert policy below for the real enforcement.
+const DM_ATTACHMENT_BUCKET = 'open-play-dm-attachments';
+const DM_MAX_ATTACHMENTS_PER_THREAD = 6;
 
 let sbClient = null;
 function sbReady(){
@@ -331,7 +339,7 @@ const DmAPI = {
     if(error){ console.error('[dm] load failed', error); return []; }
     return data || [];
   },
-  async send(eventId, hostId, participantId, sender, body){
+  async send(eventId, hostId, participantId, sender, body, attachment){
     if(!sbReady()) throw new Error('Messaging isn\u2019t available right now.');
     const { data, error } = await sbClient.from(DM_TABLE).insert({
       event_id: String(eventId),
@@ -340,10 +348,51 @@ const DmAPI = {
       sender_id: sender.id,
       sender_name: sender.display_name || 'Player',
       sender_avatar_url: sender.avatar_url || null,
-      body: body,
+      body: body || '',
+      attachment_url: attachment ? attachment.url : null,
+      attachment_name: attachment ? attachment.name : null,
+      attachment_type: attachment ? attachment.type : null,
+      attachment_size: attachment ? attachment.size : null,
     }).select().single();
     if(error) throw error;
     return data;
+  },
+  // How many (non-deleted, since DMs have no soft-delete) attachments
+  // already exist in this thread — checked before opening the file picker,
+  // same idea as ChatAPI.getMyAttachmentCount but scoped to the thread
+  // rather than one sender, since host + participant share the cap.
+  async getAttachmentCount(eventId, participantId){
+    if(!sbReady() || !participantId) return 0;
+    const { count, error } = await sbClient
+      .from(DM_TABLE)
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', String(eventId))
+      .eq('participant_id', participantId)
+      .not('attachment_url', 'is', null);
+    if(error){ console.error('[dm] getAttachmentCount failed', error); return 0; }
+    return count || 0;
+  },
+  // Uploads one file to the DM-attachments bucket and returns
+  // { url, name, type, size } to hand to send(). Path is
+  // "<event_id>/<participant_id>/<timestamp>_<filename>" — keyed by the
+  // thread, not the uploader, since either party can post into it; see
+  // the Storage insert policy below for the real (server-side) cap.
+  async uploadAttachment(eventId, participantId, file){
+    if(!sbReady()) throw new Error('Attachments aren\u2019t available right now.');
+    if(file.size > CHAT_MAX_ATTACHMENT_BYTES) throw new Error('That file is too big \u2014 max 5MB.');
+    const safeName = file.name.replace(/[^a-zA-Z0-9_.\-]/g, '_').slice(-80);
+    const path = `${eventId}/${participantId}/${Date.now()}_${safeName}`;
+    const { error: uploadErr } = await sbClient.storage
+      .from(DM_ATTACHMENT_BUCKET)
+      .upload(path, file, { contentType: file.type || 'application/octet-stream' });
+    if(uploadErr){
+      // The Storage insert policy rejects a file past the per-thread cap —
+      // surface that as a friendly limit message instead of a raw error.
+      if(/polic/i.test(uploadErr.message || '')) throw new Error(`This conversation has reached the ${DM_MAX_ATTACHMENTS_PER_THREAD}-file limit.`);
+      throw uploadErr;
+    }
+    const { data: pub } = sbClient.storage.from(DM_ATTACHMENT_BUCKET).getPublicUrl(path);
+    return { url: pub.publicUrl, name: file.name, type: file.type || 'application/octet-stream', size: file.size };
   },
   // For the host's "Messages" list: the single latest message per
   // participant thread on this event, newest thread first.
@@ -722,14 +771,37 @@ create table if not exists open_play_dm_messages (
   sender_id text not null,
   sender_name text not null,
   sender_avatar_url text,
-  body text not null,
+  body text not null default '',
+  attachment_url text,
+  attachment_name text,
+  attachment_type text,
+  attachment_size bigint,
   created_at timestamptz not null default now(),
-  constraint open_play_dm_messages_body_check check (char_length(body) between 1 and 500),
   constraint open_play_dm_messages_sender_check check (sender_id = host_id or sender_id = participant_id),
   constraint open_play_dm_messages_parties_check check (host_id <> participant_id)
 );
 create index if not exists open_play_dm_messages_thread_idx
   on open_play_dm_messages (event_id, participant_id, created_at);
+
+-- If this table already existed from before attachments were added, run
+-- this block to bring it up to date (safe to re-run):
+alter table open_play_dm_messages
+  add column if not exists attachment_url text,
+  add column if not exists attachment_name text,
+  add column if not exists attachment_type text,
+  add column if not exists attachment_size bigint;
+alter table open_play_dm_messages alter column body drop not null;
+alter table open_play_dm_messages alter column body set default '';
+update open_play_dm_messages set body = '' where body is null;
+alter table open_play_dm_messages alter column body set not null;
+
+-- A message needs a body and/or an attachment — same rule as group chat,
+-- just without the "or deleted" clause since DMs have no soft-delete.
+alter table open_play_dm_messages drop constraint if exists open_play_dm_messages_body_check;
+alter table open_play_dm_messages add constraint open_play_dm_messages_body_check check (
+  char_length(coalesce(body,'')) <= 500
+  and (char_length(coalesce(body,'')) > 0 or attachment_url is not null)
+);
 
 create table if not exists open_play_dm_eligible_participants (
   event_id text not null,
@@ -760,7 +832,8 @@ create policy "dm readable" on open_play_dm_messages
 drop policy if exists "eligible parties can dm" on open_play_dm_messages;
 create policy "eligible parties can dm" on open_play_dm_messages
   for insert with check (
-    char_length(coalesce(body,'')) between 1 and 500
+    char_length(coalesce(body,'')) <= 500
+    and (char_length(coalesce(body,'')) > 0 or attachment_url is not null)
     and (
       sender_id = host_id
       or (
@@ -788,6 +861,45 @@ create policy "dm eligibility syncable update" on open_play_dm_eligible_particip
 drop policy if exists "dm eligibility syncable delete" on open_play_dm_eligible_participants;
 create policy "dm eligibility syncable delete" on open_play_dm_eligible_participants
   for delete using (true);
+
+-- DM attachments: a public Storage bucket, 5MB/file, images + PDF only —
+-- same shape as chat attachments, but the cap is per *thread*
+-- (event_id/participant_id), shared between host and participant, since
+-- files are stored at "<event_id>/<participant_id>/<timestamp>_<filename>"
+-- rather than per-uploader. See "NOTE ON AUTH" near the top of this file
+-- for the same residual identity-verification limitation as everywhere
+-- else here: this checks the thread is a real (eligible) one, not
+-- cryptographically who's uploading into it.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'open-play-dm-attachments', 'open-play-dm-attachments', true, 5242880,
+  array['image/jpeg','image/png','image/gif','image/webp','application/pdf']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "dm attachments public read" on storage.objects;
+create policy "dm attachments public read" on storage.objects
+  for select using (bucket_id = 'open-play-dm-attachments');
+
+drop policy if exists "eligible threads can upload up to 6 dm attachments" on storage.objects;
+create policy "eligible threads can upload up to 6 dm attachments" on storage.objects
+  for insert with check (
+    bucket_id = 'open-play-dm-attachments'
+    and exists (
+      select 1 from open_play_dm_eligible_participants e
+      where e.event_id = (storage.foldername(name))[1]
+        and e.user_id = (storage.foldername(name))[2]
+    )
+    and (
+      select count(*) from storage.objects o
+      where o.bucket_id = 'open-play-dm-attachments'
+        and (storage.foldername(o.name))[1] = (storage.foldername(name))[1]
+        and (storage.foldername(o.name))[2] = (storage.foldername(name))[2]
+    ) < 6
+  );
 
 do $$
 begin
@@ -2886,12 +2998,15 @@ function opWatchDmCleanup(container){
 }
 
 // Builds one message bubble, reusing the same markup/classes as group chat
-// (op-chat-*) so it inherits that styling for free — DMs are plain text
-// only (no edit/unsend/attachments), so this is simpler than opChatBubbleHtml.
+// (op-chat-*) so it inherits that styling for free — DMs support
+// attachments the same way group chat does (see opChatAttachmentHtml),
+// but skip edit/unsend since those aren't offered here.
 function opDmBubbleHtml(m, isMine){
+  const attachHtml = opChatAttachmentHtml(m);
+  const bodyHtml = m.body ? `<div class="op-chat-bubble-text">${esc(m.body)}</div>` : '';
   return `
     ${!isMine ? `<div class="op-chat-msg-author">${esc(m.sender_name || 'Player')}</div>` : ''}
-    <div class="op-chat-bubble"><div class="op-chat-bubble-text">${esc(m.body || '')}</div></div>
+    <div class="op-chat-bubble">${attachHtml}${bodyHtml}</div>
     <div class="op-chat-msg-time">${esc(opChatTime(m.created_at))}</div>`;
 }
 
@@ -2982,7 +3097,10 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
     <div class="modal-title">${esc(headerName)}</div>
     <div class="modal-sub">${esc(ev.title)} \u2014 private message, not the group chat. Same as group chat, this isn\u2019t end-to-end encrypted.</div>
     <div class="op-chat-messages" id="opDmMessages"><div class="op-empty" style="padding:24px;">Loading messages\u2026</div></div>
+    <div class="op-chat-attach-preview" id="opDmAttachPreview" style="display:none;"></div>
     <form class="op-chat-form" id="opDmForm">
+      <button type="button" class="op-chat-attach-btn" id="opDmAttachBtn" title="Attach a file (max ${DM_MAX_ATTACHMENTS_PER_THREAD} per conversation)">\ud83d\udcce</button>
+      <input type="file" id="opDmFileInput" accept="${CHAT_ATTACHMENT_ACCEPT}" style="display:none;" />
       <input type="text" class="op-input op-chat-input" id="opDmInput" placeholder="${isHost ? 'Reply\u2026' : 'Message the host\u2026'}" maxlength="500" autocomplete="off" />
       <button type="submit" class="btn btn-primary op-chat-send">Send</button>
     </form>
@@ -3022,23 +3140,76 @@ async function opRenderDmThread(eventId, participantId, participantName, partici
 
   opDmChannel = DmAPI.subscribe(eventId, participantId, function(m){ appendMessage(m); }, isHost ? 'host' : 'participant');
 
+  // ---- attachments (same pattern as group chat, but capped per thread) ----
+  let threadAttachmentCount = 0;
+  try{ threadAttachmentCount = await DmAPI.getAttachmentCount(eventId, participantId); }catch(err){ /* best effort — real cap is server-side */ }
+  let pendingAttachment = null; // File staged for the next send
+
+  const attachBtn = document.getElementById('opDmAttachBtn');
+  const fileInput = document.getElementById('opDmFileInput');
+  const previewEl = document.getElementById('opDmAttachPreview');
+
+  function renderAttachPreview(){
+    if(!previewEl) return;
+    if(!pendingAttachment){ previewEl.style.display = 'none'; previewEl.innerHTML = ''; return; }
+    previewEl.style.display = 'flex';
+    previewEl.innerHTML = `
+      <span class="op-chat-attach-preview-name">\ud83d\udcce ${esc(pendingAttachment.name)}</span>
+      <button type="button" class="op-chat-attach-remove" id="opDmAttachRemove" title="Remove">\u2715</button>`;
+    const removeBtn = document.getElementById('opDmAttachRemove');
+    if(removeBtn) removeBtn.addEventListener('click', function(){ pendingAttachment = null; renderAttachPreview(); });
+  }
+
+  if(attachBtn && fileInput){
+    attachBtn.addEventListener('click', function(){
+      if(threadAttachmentCount >= DM_MAX_ATTACHMENTS_PER_THREAD){
+        toast(`This conversation has already reached the ${DM_MAX_ATTACHMENTS_PER_THREAD}-file limit.`, 'error');
+        return;
+      }
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', function(){
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = ''; // reset so picking the same file again still fires change
+      if(!file) return;
+      if(file.size > CHAT_MAX_ATTACHMENT_BYTES){ toast('That file is too big \u2014 max 5MB.', 'error'); return; }
+      pendingAttachment = file;
+      renderAttachPreview();
+    });
+  }
+
   const form = document.getElementById('opDmForm');
   if(form){
     form.addEventListener('submit', async function(e){
       e.preventDefault();
       const input = document.getElementById('opDmInput');
       const body = (input.value || '').trim();
-      if(!body) return;
+      if(!body && !pendingAttachment) return;
       const btn = form.querySelector('.op-chat-send');
       if(btn) btn.disabled = true;
+      if(attachBtn) attachBtn.disabled = true;
+      const savedBody = body;
+      const savedAttachment = pendingAttachment;
       input.value = '';
+      pendingAttachment = null;
+      renderAttachPreview();
       try{
-        await DmAPI.send(eventId, ev.host_id, participantId, opUI.user, body);
+        let attachmentPayload = null;
+        if(savedAttachment){
+          attachmentPayload = await DmAPI.uploadAttachment(eventId, participantId, savedAttachment);
+          threadAttachmentCount++;
+        }
+        await DmAPI.send(eventId, ev.host_id, participantId, opUI.user, savedBody, attachmentPayload);
       }catch(err){
         toast(opFriendlyError(err, 'Message didn\u2019t send \u2014 try again.'), 'error');
-        input.value = body;
+        input.value = savedBody;
+        if(savedAttachment && !/limit/i.test((err && err.message) || '')){
+          pendingAttachment = savedAttachment; // put it back unless it was the limit that failed
+          renderAttachPreview();
+        }
       }
       if(btn) btn.disabled = false;
+      if(attachBtn) attachBtn.disabled = false;
       input.focus();
     });
   }
