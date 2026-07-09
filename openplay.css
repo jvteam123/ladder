@@ -212,3 +212,24 @@
   .op-joiner-name{ flex:1 1 100%; white-space:normal; }
   .op-joiner-actions{ flex:1 1 100%; justify-content:flex-start; }
 }
+
+/* ---------------- Event chat ---------------- */
+.op-chat-messages{
+  display:flex; flex-direction:column; gap:10px;
+  max-height:min(52vh, 420px); overflow-y:auto;
+  margin:12px 0; padding:4px 2px;
+}
+.op-chat-msg{ display:flex; flex-direction:column; align-items:flex-start; max-width:82%; }
+.op-chat-msg-mine{ align-self:flex-end; align-items:flex-end; }
+.op-chat-msg-author{ font-size:11px; font-weight:700; color:var(--text-dim); margin:0 2px 3px; }
+.op-chat-bubble{
+  background:var(--surface-2); color:var(--text); border:1px solid var(--line);
+  border-radius:var(--radius-md); padding:8px 12px; font-size:13.5px; line-height:1.4;
+  white-space:pre-wrap; word-break:break-word;
+}
+.op-chat-msg-mine .op-chat-bubble{ background:var(--court); color:#0a0a0a; border-color:var(--court); }
+.op-chat-msg-time{ font-size:10.5px; color:var(--text-dim); margin:3px 2px 0; }
+
+.op-chat-form{ display:flex; gap:8px; align-items:center; }
+.op-chat-input{ flex:1; margin-bottom:0; }
+.op-chat-send{ flex:none; padding:10px 16px; }
