@@ -1,6 +1,12 @@
 /* ============================================================
    OPEN PLAY / HOST A GAME — styles (uses existing design tokens)
-   ============================================================ */
+   ============================================================
+   Layout is mobile-first (base rules below assume a single phone-width
+   column). The "MULTI-DEVICE / RESPONSIVE" section at the end of this
+   file layers on tablet and desktop breakpoints — wider containers,
+   multi-column event grids, roomier cards — without changing any of
+   the class names or markup the JS renders, so no JS changes were
+   needed to get proper tablet/desktop layouts. */
 .op-wrap{ padding:14px 16px 90px; }
 
 .op-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
@@ -362,3 +368,81 @@
   box-shadow:0 0 0 2px var(--surface);
 }
 .op-chat-unread-dot-btn{ margin-left:8px; }
+
+/* ============================================================
+   MULTI-DEVICE / RESPONSIVE
+   ------------------------------------------------------------
+   Everything above this point is the mobile baseline (phones,
+   ~<640px) and stays untouched. These breakpoints progressively
+   widen the layout for tablets and desktop/enterprise displays —
+   centered containers, multi-column event grids, and a bit more
+   breathing room — using only the existing classes the JS already
+   renders. Keyboard-focus styling is included too, since desktop
+   users are far more likely to be tabbing through the UI.
+   ============================================================ */
+
+/* Visible focus ring for every interactive Open Play element, for
+   keyboard/desktop users. Mouse/touch clicks don't trigger :focus-visible,
+   so this never shows up as an unwanted ring on a tap. */
+.op-card:focus-visible,
+.op-filter-chip:focus-visible,
+.op-mini-btn:focus-visible,
+.op-input:focus-visible,
+.op-joiner-row[data-action]:focus-visible{
+  outline:2px solid var(--court);
+  outline-offset:2px;
+}
+
+/* ---- Tablet and up (~641px): centered container, 2-column event grid ---- */
+@media (min-width:641px){
+  .op-wrap{ max-width:900px; margin:0 auto; padding:24px 28px 90px; }
+
+  .op-header{ align-items:center; margin-bottom:22px; }
+  .op-h-title{ font-size:23px; }
+
+  .op-filter-chips{ flex-wrap:wrap; overflow-x:visible; }
+
+  .op-event-list{
+    display:grid; grid-template-columns:repeat(2, 1fr);
+    gap:12px; align-items:start;
+  }
+
+  .op-card{ padding:16px; }
+
+  .op-signin-card{ max-width:440px; margin:0 auto; }
+
+  /* Roomier participant tiles once there's space for them. */
+  .op-participant-grid{ grid-template-columns:repeat(auto-fill, minmax(68px, 1fr)); gap:18px 10px; }
+
+  /* Manage-participants rows get their action buttons back on one line
+     even at counts that would wrap on a phone, since there's more width. */
+  .op-joiner-row{ padding:10px 12px; }
+}
+
+/* ---- Desktop / enterprise displays (~1024px+) ---- */
+@media (min-width:1024px){
+  .op-wrap{ max-width:1180px; padding:32px 36px 90px; }
+
+  .op-h-title{ font-size:25px; }
+  .op-h-sub{ font-size:13.5px; }
+
+  .op-event-list{ grid-template-columns:repeat(3, 1fr); gap:14px; }
+
+  .op-card{ padding:18px; transition:border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+  .op-card:hover{ transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,0.18); }
+
+  .op-participant-grid{ grid-template-columns:repeat(auto-fill, minmax(76px, 1fr)); gap:22px 12px; }
+  .op-participant-avatar{ width:64px; height:64px; }
+
+  .op-chat-messages{ max-height:min(58vh, 520px); }
+
+  /* Two joiner rows side by side reads better than one long skinny
+     list once a screen is wide enough to fit them comfortably. */
+  .op-joiner-list{ display:grid; grid-template-columns:repeat(2, 1fr); gap:8px 12px; }
+}
+
+/* ---- Large desktop (~1440px+): a bit more room, 4-column event grid ---- */
+@media (min-width:1440px){
+  .op-wrap{ max-width:1320px; }
+  .op-event-list{ grid-template-columns:repeat(4, 1fr); }
+}
