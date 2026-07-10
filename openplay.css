@@ -230,11 +230,11 @@
 
 .op-joiner-list{ display:flex; flex-direction:column; gap:8px; }
 .op-joiner-row{
-  display:flex; align-items:center; gap:10px; background:var(--surface);
+  display:flex; align-items:center; flex-wrap:wrap; gap:10px; row-gap:8px; background:var(--surface);
   border:1px solid var(--line); border-radius:var(--radius-md); padding:8px 10px;
 }
-.op-joiner-name{ font-size:13.5px; font-weight:600; color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.op-joiner-actions{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; flex:none; }
+.op-joiner-name{ font-size:13.5px; font-weight:600; color:var(--text); flex:1 1 160px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.op-joiner-actions{ display:flex; align-items:center; gap:6px; flex:1 1 auto; flex-wrap:wrap; justify-content:flex-end; }
 
 /* Clickable joiner rows — used by the DM thread list (op-open-dm-thread) so
    a whole row is tappable, same visual language as everything else here. */
@@ -256,15 +256,13 @@
 .op-mini-btn-unpaid{ background:rgba(255,193,7,0.15); color:#ffc107; }
 .op-mini-btn-unpaid:hover{ background:rgba(255,193,7,0.25); }
 
-/* On narrow screens a joiner row can carry several action buttons
-   (Confirm, Paid/Unpaid, Move to waitlist, Make/Remove sub host, Remove).
-   .op-joiner-actions has flex:none so it doesn't shrink, and the row
-   itself never wraps — past a certain button count they just overflow
-   off the edge of the screen instead of dropping to a new line. Let the
-   row wrap on mobile so the name sits on top and actions flow below it,
-   still wrapping among themselves via the existing flex-wrap:wrap. */
+/* Below ~480px, prefer the name taking its own full-width line above the
+   actions rather than the two sharing a cramped line — flex-wrap on the
+   row (set above, and applied at every width) still does the real work of
+   never letting buttons overflow off the edge; this just tunes how the
+   wrap looks once things are tight enough that a two-line layout reads
+   better than a lopsided shared line. */
 @media (max-width:480px){
-  .op-joiner-row{ flex-wrap:wrap; row-gap:8px; }
   .op-joiner-name{ flex:1 1 100%; white-space:normal; }
   .op-joiner-actions{ flex:1 1 100%; justify-content:flex-start; }
 }
@@ -435,10 +433,6 @@
   .op-participant-avatar{ width:64px; height:64px; }
 
   .op-chat-messages{ max-height:min(58vh, 520px); }
-
-  /* Two joiner rows side by side reads better than one long skinny
-     list once a screen is wide enough to fit them comfortably. */
-  .op-joiner-list{ display:grid; grid-template-columns:repeat(2, 1fr); gap:8px 12px; }
 }
 
 /* ---- Large desktop (~1440px+): a bit more room, 4-column event grid ---- */
