@@ -1,0 +1,84 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="glow" cx="82%" cy="32%" r="65%">
+      <stop offset="0%" stop-color="#C6F135" stop-opacity="0.16"/>
+      <stop offset="55%" stop-color="#C6F135" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#C6F135" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0D1013"/>
+      <stop offset="100%" stop-color="#08090B"/>
+    </linearGradient>
+    <filter id="dotglow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect x="0.5" y="0.5" width="1199" height="629" fill="none" stroke="#1C2126" stroke-width="1"/>
+
+  <!-- eyebrow -->
+  <circle cx="80" cy="86" r="5" fill="#C6F135"/>
+  <text x="96" y="92" font-family="Space Grotesk Medium" font-size="17" letter-spacing="3" fill="#8B939C">WEDINK &#183; OPEN PLAY</text>
+
+  <!-- headline -->
+  <text x="72" y="248" font-family="Archivo Black" font-size="104" fill="#F3F5F0">MICRO</text>
+  <text x="72" y="352" font-family="Archivo Black" font-size="104" fill="#C6F135">LADDER</text>
+
+  <!-- tagline -->
+  <text x="74" y="410" font-family="Space Grotesk Regular" font-size="27" fill="#A7AEB6">Win a challenge. Climb a rung. Repeat.</text>
+
+  <!-- link chip -->
+  <g>
+    <rect x="72" y="486" width="336" height="60" rx="14" fill="#12151A" stroke="#242A31" stroke-width="1.5"/>
+    <path d="M104 508 a8 8 0 0 1 11.3 0 l6 6 a8 8 0 0 1 0 11.3 l-9 9 a8 8 0 0 1-11.3 0" fill="none" stroke="#6E7680" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M132 524 a8 8 0 0 0 -11.3 0 l-6 6 a8 8 0 0 0 0 11.3 l9 9 a8 8 0 0 0 11.3 0" fill="none" stroke="#6E7680" stroke-width="2.4" stroke-linecap="round"/>
+    <text x="150" y="524" font-family="Space Grotesk Medium" font-size="21" fill="#D7DBDE">wedink.app/l/8f3k2</text>
+  </g>
+  <g>
+    <rect x="424" y="486" width="130" height="60" rx="14" fill="#C6F135"/>
+    <path d="M446 517 l7 7 l14 -15" fill="none" stroke="#0A0C0E" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="474" y="524" font-family="Space Grotesk Medium" font-size="20" fill="#0A0C0E">Copied</text>
+  </g>
+
+  <!-- ladder signature -->
+  <g>
+    <text x="1020" y="128" font-family="Space Grotesk Medium" font-size="15" letter-spacing="2.5" fill="#6E7680" text-anchor="middle">TOP OF LADDER</text>
+
+    <!-- rails -->
+    <line x1="948" y1="150" x2="948" y2="560" stroke="#2A3037" stroke-width="6" stroke-linecap="round"/>
+    <line x1="1092" y1="150" x2="1092" y2="560" stroke="#2A3037" stroke-width="6" stroke-linecap="round"/>
+
+    <!-- rungs (rank 1 at top .. rank 6 at bottom) -->
+    <g stroke="#3A424B" stroke-width="6" stroke-linecap="round">
+      <line x1="948" y1="164" x2="1092" y2="164"/>
+      <line x1="948" y1="238" x2="1092" y2="238"/>
+      <line x1="948" y1="312" x2="1092" y2="312"/>
+      <line x1="948" y1="386" x2="1092" y2="386"/>
+      <line x1="948" y1="460" x2="1092" y2="460"/>
+      <line x1="948" y1="534" x2="1092" y2="534"/>
+    </g>
+
+    <g font-family="Space Grotesk Regular" font-size="16" fill="#5B6169" text-anchor="end">
+      <text x="932" y="169">1</text>
+      <text x="932" y="243">2</text>
+      <text x="932" y="317">3</text>
+      <text x="932" y="391">4</text>
+      <text x="932" y="465">5</text>
+      <text x="932" y="539">6</text>
+    </g>
+
+    <!-- climbing player dots -->
+    <circle cx="1020" cy="164" r="15" fill="#C6F135" filter="url(#dotglow)"/>
+    <circle cx="1020" cy="164" r="15" fill="none" stroke="#0A0C0E" stroke-width="2"/>
+
+    <circle cx="1000" cy="312" r="12" fill="#12151A" stroke="#4A525B" stroke-width="2.5"/>
+    <circle cx="1060" cy="386" r="12" fill="#12151A" stroke="#4A525B" stroke-width="2.5"/>
+    <circle cx="1010" cy="460" r="12" fill="#12151A" stroke="#4A525B" stroke-width="2.5"/>
+  </g>
+</svg>
