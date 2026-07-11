@@ -7158,10 +7158,19 @@ function psBuildMixedGenderOrder(pool, randomize) {
     }
   }
 
-  const allPairs = duoPairs.concat(pairs);
-  if (randomize) shuffleArray(allPairs);
+  // Any 1-player "pair" is an odd leftover with no partner (e.g. an uneven
+  // male/female split). It must be kept out of the shuffle with the real
+  // 2-player pairs and placed at the very end of the order — otherwise its
+  // odd length shifts every pair that comes after it once flattened, which
+  // is what breaks court makeup downstream (e.g. a court showing 3
+  // female/1 male instead of two clean partner pairs).
+  const allPairsRaw = duoPairs.concat(pairs);
+  const fullPairs = allPairsRaw.filter(p => p.length === 2);
+  const singles = allPairsRaw.filter(p => p.length === 1);
+  if (randomize) { shuffleArray(fullPairs); shuffleArray(singles); }
   const ordered = [];
-  allPairs.forEach(pair => pair.forEach(p => ordered.push(p)));
+  fullPairs.forEach(pair => pair.forEach(p => ordered.push(p)));
+  singles.forEach(pair => pair.forEach(p => ordered.push(p)));
   return ordered;
 }
 
