@@ -7200,7 +7200,8 @@ function psInit() {
     blockSize: clamp(parseInt(state.settings.psBlockSize, 10) || 4, 2, 8),
     sessionMatchIds: [],   // ids of matches recorded this PS session, for the end-of-session summary
     matchDurations: [],    // ms per completed match this session, for wait-time estimates
-    actionHistory: []      // small PS-specific undo stack (separate from the single global state.undo)
+    actionHistory: [],     // small PS-specific undo stack (separate from the single global state.undo)
+    genderWaitCycles: { w: 0, l: 0 } // Separate mode: how many results in a row a block has gone without a same-gender matchup, before giving up and mixing
   };
   // Fill courts from the queue
   psFillCourts();
@@ -7352,6 +7353,39 @@ function psMatchTypeLabel(type) {
 }
 
 // After confirming a court result: route winners/losers to blocks
+// ── Gender-aware block flushing (Separate mode) ────────────────────────────
+// Returns 'M' if both players in a partner-pair are male, 'F' if both are
+// female, or null if the pair is mixed-gender / has an unset gender — a null
+// pair is only ever used as a last-resort fallback, never matched on purpose.
+function psPairGenderTag(pair) {
+  const genders = pair.map(e => (getPlayer(e.id) || {}).gender);
+  if (genders[0] === 'M' && genders[1] === 'M') return 'M';
+  if (genders[0] === 'F' && genders[1] === 'F') return 'F';
+  return null;
+}
+
+// Scans `block` (a flat array that always accumulates in pushes of exactly
+// 2 — see psHandleResult below — so consecutive entries stay grouped as
+// partner-pairs) for two pairs that are both all-male or both all-female.
+// Returns { extracted, remaining } with those 4 players pulled out (in pair
+// order) if a same-gender matchup exists, or null if none is available yet.
+function psExtractSameGenderPairs(block) {
+  const groups = [];
+  for (let i = 0; i < block.length; i += 2) groups.push(block.slice(i, i + 2));
+  for (let i = 0; i < groups.length; i++) {
+    const tagI = psPairGenderTag(groups[i]);
+    if (!tagI) continue;
+    for (let j = i + 1; j < groups.length; j++) {
+      if (psPairGenderTag(groups[j]) === tagI) {
+        const extracted = groups[i].concat(groups[j]);
+        const remaining = groups.filter((_, idx) => idx !== i && idx !== j).flat();
+        return { extracted, remaining };
+      }
+    }
+  }
+  return null;
+}
+
 function psHandleResult(courtId, winnerTeam) {
   const ps = state.paddleStack;
   if (!ps) return;
@@ -7369,19 +7403,77 @@ function psHandleResult(courtId, winnerTeam) {
   ps.wBlock.push(...winners);
   ps.lBlock.push(...losers);
 
-  // When a block reaches blockSize, flush it to the queue.
-  // Blocks alternate W/L in the queue: we always flush both when they're ready,
-  // but if only one is ready we still flush it immediately so no court sits empty.
-  // The "alternating W×N / L×N" pattern emerges naturally as blocks fill up.
-  if (ps.wBlock.length >= blockSize) {
-    const flushed = ps.wBlock.splice(0, blockSize);
-    flushed.forEach(e => e.sinceRound = state.round);
-    ps.queue.push(...flushed);
-  }
-  if (ps.lBlock.length >= blockSize) {
-    const flushed = ps.lBlock.splice(0, blockSize);
-    flushed.forEach(e => e.sinceRound = state.round);
-    ps.queue.push(...flushed);
+  const genderMode = state.settings.psGenderPairingMode
+    || (state.settings.psMixedGenderPairing === false ? 'off' : 'mixed');
+
+  if (genderMode === 'separate') {
+    // Same-gender-vs-same-gender: try to flush two all-male pairs against
+    // each other, or two all-female pairs against each other, before
+    // resorting to whatever is oldest. If a block has gone unmatched for a
+    // few results in a row (e.g. only one pair of that gender is left in
+    // the whole session), give up waiting and flush FIFO instead — that's
+    // the "mix if insufficient" fallback, so nobody sits stuck forever.
+    if (!ps.genderWaitCycles) ps.genderWaitCycles = { w: 0, l: 0 };
+    const giveUpAfter = 3;
+
+    if (ps.wBlock.length >= blockSize) {
+      const match = psExtractSameGenderPairs(ps.wBlock);
+      if (match) {
+        match.extracted.forEach(e => e.sinceRound = state.round);
+        ps.queue.push(...match.extracted);
+        ps.wBlock = match.remaining;
+      }
+      // Only reset the counter once the block is fully drained. A match
+      // elsewhere in the block (removing OTHER pairs) doesn't help whatever
+      // is left sitting here, so it must still count as another cycle waited —
+      // otherwise a lone pair of the underrepresented gender could wait
+      // forever as long as other pairs keep matching around it.
+      if (ps.wBlock.length === 0) {
+        ps.genderWaitCycles.w = 0;
+      } else {
+        ps.genderWaitCycles.w++;
+        if (ps.genderWaitCycles.w >= giveUpAfter) {
+          const flushed = ps.wBlock.splice(0, blockSize);
+          flushed.forEach(e => e.sinceRound = state.round);
+          ps.queue.push(...flushed);
+          ps.genderWaitCycles.w = 0;
+        }
+      }
+    }
+    if (ps.lBlock.length >= blockSize) {
+      const match = psExtractSameGenderPairs(ps.lBlock);
+      if (match) {
+        match.extracted.forEach(e => e.sinceRound = state.round);
+        ps.queue.push(...match.extracted);
+        ps.lBlock = match.remaining;
+      }
+      if (ps.lBlock.length === 0) {
+        ps.genderWaitCycles.l = 0;
+      } else {
+        ps.genderWaitCycles.l++;
+        if (ps.genderWaitCycles.l >= giveUpAfter) {
+          const flushed = ps.lBlock.splice(0, blockSize);
+          flushed.forEach(e => e.sinceRound = state.round);
+          ps.queue.push(...flushed);
+          ps.genderWaitCycles.l = 0;
+        }
+      }
+    }
+  } else {
+    // When a block reaches blockSize, flush it to the queue.
+    // Blocks alternate W/L in the queue: we always flush both when they're ready,
+    // but if only one is ready we still flush it immediately so no court sits empty.
+    // The "alternating W×N / L×N" pattern emerges naturally as blocks fill up.
+    if (ps.wBlock.length >= blockSize) {
+      const flushed = ps.wBlock.splice(0, blockSize);
+      flushed.forEach(e => e.sinceRound = state.round);
+      ps.queue.push(...flushed);
+    }
+    if (ps.lBlock.length >= blockSize) {
+      const flushed = ps.lBlock.splice(0, blockSize);
+      flushed.forEach(e => e.sinceRound = state.round);
+      ps.queue.push(...flushed);
+    }
   }
 
   // ── Small-group fallback ────────────────────────────────────────────────
