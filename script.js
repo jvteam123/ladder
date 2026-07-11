@@ -7200,8 +7200,7 @@ function psInit() {
     blockSize: clamp(parseInt(state.settings.psBlockSize, 10) || 4, 2, 8),
     sessionMatchIds: [],   // ids of matches recorded this PS session, for the end-of-session summary
     matchDurations: [],    // ms per completed match this session, for wait-time estimates
-    actionHistory: [],     // small PS-specific undo stack (separate from the single global state.undo)
-    genderWaitCycles: { w: 0, l: 0 } // Separate mode: how many results in a row a block has gone without a same-gender matchup, before giving up and mixing
+    actionHistory: []      // small PS-specific undo stack (separate from the single global state.undo)
   };
   // Fill courts from the queue
   psFillCourts();
@@ -7407,57 +7406,26 @@ function psHandleResult(courtId, winnerTeam) {
     || (state.settings.psMixedGenderPairing === false ? 'off' : 'mixed');
 
   if (genderMode === 'separate') {
-    // Same-gender-vs-same-gender: try to flush two all-male pairs against
-    // each other, or two all-female pairs against each other, before
-    // resorting to whatever is oldest. If a block has gone unmatched for a
-    // few results in a row (e.g. only one pair of that gender is left in
-    // the whole session), give up waiting and flush FIFO instead — that's
-    // the "mix if insufficient" fallback, so nobody sits stuck forever.
-    if (!ps.genderWaitCycles) ps.genderWaitCycles = { w: 0, l: 0 };
-    const giveUpAfter = 3;
-
+    // Same-gender-vs-same-gender: when a block reaches blockSize, flush it
+    // immediately — exactly the same instant-flush timing as normal mode —
+    // but if the pairs sitting in the block right now happen to be two
+    // all-male pairs or two all-female pairs, match them against each other
+    // instead of just taking them in arrival order. If they don't share a
+    // gender (not enough of one gender circulating right now), flush them
+    // FIFO immediately, same as normal mode — no waiting, no delay.
     if (ps.wBlock.length >= blockSize) {
       const match = psExtractSameGenderPairs(ps.wBlock);
-      if (match) {
-        match.extracted.forEach(e => e.sinceRound = state.round);
-        ps.queue.push(...match.extracted);
-        ps.wBlock = match.remaining;
-      }
-      // Only reset the counter once the block is fully drained. A match
-      // elsewhere in the block (removing OTHER pairs) doesn't help whatever
-      // is left sitting here, so it must still count as another cycle waited —
-      // otherwise a lone pair of the underrepresented gender could wait
-      // forever as long as other pairs keep matching around it.
-      if (ps.wBlock.length === 0) {
-        ps.genderWaitCycles.w = 0;
-      } else {
-        ps.genderWaitCycles.w++;
-        if (ps.genderWaitCycles.w >= giveUpAfter) {
-          const flushed = ps.wBlock.splice(0, blockSize);
-          flushed.forEach(e => e.sinceRound = state.round);
-          ps.queue.push(...flushed);
-          ps.genderWaitCycles.w = 0;
-        }
-      }
+      const flushed = match ? match.extracted : ps.wBlock.splice(0, blockSize);
+      if (match) ps.wBlock = match.remaining;
+      flushed.forEach(e => e.sinceRound = state.round);
+      ps.queue.push(...flushed);
     }
     if (ps.lBlock.length >= blockSize) {
       const match = psExtractSameGenderPairs(ps.lBlock);
-      if (match) {
-        match.extracted.forEach(e => e.sinceRound = state.round);
-        ps.queue.push(...match.extracted);
-        ps.lBlock = match.remaining;
-      }
-      if (ps.lBlock.length === 0) {
-        ps.genderWaitCycles.l = 0;
-      } else {
-        ps.genderWaitCycles.l++;
-        if (ps.genderWaitCycles.l >= giveUpAfter) {
-          const flushed = ps.lBlock.splice(0, blockSize);
-          flushed.forEach(e => e.sinceRound = state.round);
-          ps.queue.push(...flushed);
-          ps.genderWaitCycles.l = 0;
-        }
-      }
+      const flushed = match ? match.extracted : ps.lBlock.splice(0, blockSize);
+      if (match) ps.lBlock = match.remaining;
+      flushed.forEach(e => e.sinceRound = state.round);
+      ps.queue.push(...flushed);
     }
   } else {
     // When a block reaches blockSize, flush it to the queue.
