@@ -5102,12 +5102,13 @@ function updateTabsFade(){
 }
 
 /* ---------- Nav menu: bottom-sheet listing every section ---------- */
-function openNavMenu(){
-  openModal(`
-    <div class="modal-title">Navigate</div>
-    <div class="modal-sub">Jump straight to any section of Micro Ladder.</div>
-    <div class="nav-menu-list">
-      ${NAV_SECTIONS.map(it=>`
+// Utility/secondary sections that always render as their own group at the
+// very bottom of the Navigate sheet (below a divider), separate from the
+// primary session tabs above.
+const NAV_SECONDARY_IDS = ['settings', 'about'];
+
+function navMenuItemHtml(it){
+  return `
         <button class="nav-menu-item ${state.tab===it.id?'active':''}" data-action="nav-menu-go" data-tab="${it.id}">
           <span class="nmi-ico">${it.svg}</span>
           <span class="nmi-text">
@@ -5115,10 +5116,23 @@ function openNavMenu(){
             <span class="nmi-desc">${it.desc}</span>
           </span>
           ${state.tab===it.id ? '<span class="nmi-current">Current</span>' : ''}
-        </button>
-      `).join('')}
+        </button>`;
+}
+
+function openNavMenu(){
+  const primary = NAV_SECTIONS.filter(it => !NAV_SECONDARY_IDS.includes(it.id));
+  const secondary = NAV_SECTIONS.filter(it => NAV_SECONDARY_IDS.includes(it.id));
+  openModal(`
+    <div class="modal-title">Navigate</div>
+    <div class="modal-sub">Jump straight to any section of Micro Ladder.</div>
+    <div class="nav-menu-list">
+      ${primary.map(navMenuItemHtml).join('')}
     </div>
-  `);
+    <div class="nav-menu-divider"><span>More</span></div>
+    <div class="nav-menu-list">
+      ${secondary.map(navMenuItemHtml).join('')}
+    </div>
+  `, false);
 }
 
 /* ---------- First-run nav hint banner (shown once per device) ---------- */
