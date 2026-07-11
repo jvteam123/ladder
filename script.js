@@ -8422,7 +8422,7 @@ function openPsPickSwapInModal(courtId, team, slot) {
 
   openModal(`
     <div class="modal-title">Swap In a Player</div>
-    <div class="modal-sub">Replacing <b style="color:var(--loss);">${esc(outPlayer?.name || '—')}</b> (${tagIcon(outTag)} Team ${team}). The swapped-out player returns to their queue position (or takes the incoming player's old spot).</div>
+    <div class="modal-sub">Replacing <b style="color:var(--loss);">${esc(outPlayer?.name || '—')}</b> (${tagIcon(outTag)} Team ${team}). Where they go depends on your pick: from the queue or a block, they take that spot back; bringing in a Sub Player sends them to the bench as a Sub Player instead; swapping from another court trades places.</div>
     ${queueHtml ? `<div class="eyebrow" style="margin:12px 2px 6px;">Pick from queue</div>${queueHtml}` : ''}
     ${ps.queue.length > 8 ? `<p class="helper-text" style="text-align:center;">Showing first 8 — see Queue tab for full list.</p>` : ''}
     ${subHtml ? `<div class="eyebrow" style="margin:14px 2px 6px;">Sub Players on the bench</div>${subHtml}` : ''}
@@ -8524,8 +8524,10 @@ function psdoSwitchPlayer(courtId, team, slot, queueIdx) {
 
 // Bring a bench Sub Player onto court in place of an existing player.
 // Unlike psdoSwitchPlayer, the incoming player isn't coming from ps.queue —
-// they come from the sub bench — so the outgoing player simply rejoins the
-// front of the queue instead of taking a specific slot.
+// they come from the sub bench. The swap is a role trade: the outgoing
+// player becomes a Sub Player themselves and sits on the bench, following
+// the same Sub Player rule (out of normal rotation, only called on again
+// when another court needs a substitute) — they do NOT rejoin ps.queue.
 function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
   const ps = state.paddleStack;
   if (!ps) return;
@@ -8552,12 +8554,12 @@ function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
   if (!Array.isArray(m.tagsB)) m.tagsB = ['N', 'N'];
 
   const outId = team === 'A' ? m.teamA[slot] : m.teamB[slot];
-  const outTag = psTag(m, team, slot);
   if (outId === subId) {
     toast('That player is already on court.', 'warning');
     closeModal();
     return;
   }
+  const outPlayer = getPlayer(outId);
 
   const duoNote = psDuoBreakNote(m, team, slot);
   psPushHistory();
@@ -8566,8 +8568,10 @@ function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
   if (team === 'A') { m.teamA[slot] = subId; m.tagsA[slot] = 'N'; }
   else              { m.teamB[slot] = subId; m.tagsB[slot] = 'N'; }
 
-  // Outgoing player rejoins the front of the queue with their wait clock reset to now
-  ps.queue.unshift({ id: outId, tag: outTag, sinceRound: state.round });
+  // Outgoing player becomes a Sub Player and steps off the rotation entirely —
+  // no queue entry for them, no tag to carry. They'll only play again once
+  // someone else pulls them in as a substitute.
+  if (outPlayer) outPlayer.isSub = true;
 
   m.matchType = psMatchType(
     [{ id: m.teamA[0], tag: m.tagsA[0] || 'N' }, { id: m.teamA[1], tag: m.tagsA[1] || 'N' }],
@@ -8575,7 +8579,7 @@ function psdoSwitchPlayerFromSub(courtId, team, slot, subId) {
   );
 
   saveAll(); renderAll(); closeModal();
-  toast(`${sub.name} subs in — ${playerName(outId)} returns to the queue.${duoNote}`, duoNote ? 'warning' : 'success');
+  toast(`${sub.name} subs in — ${playerName(outId)} becomes a Sub Player and waits on the bench.${duoNote}`, duoNote ? 'warning' : 'success');
 }
 
 // Bring a player in from a DIFFERENT court, swapping positions: the incoming
