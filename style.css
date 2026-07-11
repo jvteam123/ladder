@@ -1976,3 +1976,58 @@ td.namecell { font-size: clamp(11.5px, 3vw, 13px); }
 }
 /* Allow selection on input/form fields */
 input, textarea, select { -webkit-user-select: text; user-select: text; touch-action: manipulation; }
+
+/* ================================================================
+   ABOUT / HOW IT WORKS VIEW
+   ================================================================ */
+.about-hero{
+  text-align:center; padding:22px 14px 20px; margin-bottom:4px;
+  background:linear-gradient(180deg, rgba(215,242,61,0.07), rgba(215,242,61,0));
+  border:1px solid var(--line-soft); border-radius:var(--radius-lg);
+}
+.about-hero-emoji{ font-size:34px; line-height:1; margin-bottom:8px; }
+.about-hero-title{ font-size:19px; font-weight:800; color:var(--text); letter-spacing:-0.01em; }
+.about-hero-sub{ font-size:12.5px; color:var(--text-dim); line-height:1.55; margin-top:6px; max-width:420px; margin-left:auto; margin-right:auto; }
+
+.about-mode-card{
+  background:var(--surface); border:1px solid var(--line-soft); border-radius:var(--radius-lg);
+  padding:14px 16px 16px; margin-bottom:12px; box-shadow:var(--shadow-1);
+}
+.about-mode-head{ display:flex; align-items:center; gap:9px; margin-bottom:8px; }
+.about-mode-emoji{ font-size:20px; line-height:1; }
+.about-mode-name{ font-weight:800; font-size:15px; color:var(--text); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.about-mode-tag{
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
+  color:var(--ball); background:rgba(215,242,61,0.1); border:1px solid rgba(215,242,61,0.28);
+  border-radius:999px; padding:2px 8px;
+}
+.about-mode-card p{ font-size:13px; line-height:1.55; color:var(--text-dim); margin:0 0 8px; }
+.about-mode-card ul{ margin:0; padding-left:18px; display:flex; flex-direction:column; gap:5px; }
+.about-mode-card li{ font-size:12.5px; line-height:1.5; color:var(--text-dim); }
+.about-mode-card li strong{ color:var(--text); }
+
+.about-rule{ display:flex; gap:11px; padding:10px 2px; border-bottom:1px solid var(--line-soft); }
+.about-rule:last-child{ border-bottom:none; padding-bottom:0; }
+.about-rule:first-child{ padding-top:0; }
+.about-rule-ico{ font-size:18px; line-height:1.3; flex:none; }
+.about-rule strong{ font-size:13.5px; color:var(--text); display:block; margin-bottom:2px; }
+.about-rule p{ font-size:12.5px; line-height:1.55; color:var(--text-dim); margin:0; }
+
+.about-tab-row{ padding:10px 12px; border-bottom:1px solid var(--line-soft); }
+.about-tab-row:last-child{ border-bottom:none; }
+.about-tab-label{ font-weight:700; font-size:13px; color:var(--text); margin-bottom:3px; }
+.about-tab-desc{ font-size:12px; line-height:1.5; color:var(--text-dim); }
+
+.about-faq{ border-bottom:1px solid var(--line-soft); padding:10px 12px; }
+.about-faq summary{
+  cursor:pointer; font-weight:700; font-size:13px; color:var(--text);
+  list-style:none; display:flex; align-items:center; justify-content:space-between; gap:8px;
+}
+.about-faq summary::-webkit-details-marker{ display:none; }
+.about-faq summary::after{
+  content:'+'; font-size:16px; font-weight:400; color:var(--text-faint); flex:none; transition:transform .15s ease;
+}
+.about-faq[open] summary::after{ content:'–'; }
+.about-faq p{ font-size:12.5px; line-height:1.55; color:var(--text-dim); margin:8px 0 2px; }
+
+html.light-mode .about-mode-tag{ color:var(--ball-dim); }
