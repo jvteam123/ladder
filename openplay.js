@@ -1773,6 +1773,15 @@ function opAddNavSections(){
     { id: 'op-ended', label: 'Ended', desc: 'Games you\u2019ve hosted or played that have ended',
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>' }
   );
+  // Keep Settings & About as the last two tabs in the strip — push them to
+  // the back of the array now that Discover/Host/Ended have been added.
+  const tailIds = ['settings', 'about'];
+  const tail = tailIds.map(function(id){ return NAV_SECTIONS.find(function(s){ return s.id === id; }); }).filter(Boolean);
+  tail.forEach(function(section){
+    const idx = NAV_SECTIONS.indexOf(section);
+    if(idx !== -1) NAV_SECTIONS.splice(idx, 1);
+  });
+  NAV_SECTIONS.push.apply(NAV_SECTIONS, tail);
 }
 
 // Wrap the core renderActiveView so 'discover' / 'host' render without touching script.js
