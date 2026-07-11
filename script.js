@@ -40,6 +40,7 @@ const KEYS = {
 };
 
 const SESSIONS_KEY = 'kl_sessions'; // archived past sessions — stored separately, never wiped by reset
+const META_KEY = 'kl_meta'; // { updatedAtMs } — last local save time, used to compare against a cloud backup
 
 const DEFAULT_SETTINGS = {
   matchMode: 'Rotation', // 'Rotation' or 'RoundRobin'
@@ -260,6 +261,8 @@ async function loadState(){
     if(Array.isArray(sg)) state.scheduledGenerations = sg;
     const ps = data[KEYS.paddleStack];
     if(ps) state.paddleStack = ps;
+    const meta = await idbGet(META_KEY);
+    _localUpdatedAtMs = (meta && meta.updatedAtMs) || 0;
   }catch(e){
     console.error('Failed to load saved data from IndexedDB, starting fresh.', e);
     toast("Couldn't open local storage — starting with a blank session. Your browser may be blocking IndexedDB (private/incognito mode, or storage disabled).", 'error');
@@ -268,6 +271,7 @@ async function loadState(){
 
 window.saveAll = function saveAll(){
   try{
+    _localUpdatedAtMs = Date.now();
     // Save state.current and state.currentGeneration under separate keys so a
     // mid-session matchMode change in Settings never silently drops one of them.
     const entries = [
@@ -283,7 +287,8 @@ window.saveAll = function saveAll(){
       [KEYS.sitOutQueue, state.sitOutQueue || []],
       [KEYS.rotationCourts, state.rotationCourts || []],
       [KEYS.scheduledGenerations, state.scheduledGenerations || []],
-      [KEYS.paddleStack, state.paddleStack || null]
+      [KEYS.paddleStack, state.paddleStack || null],
+      [META_KEY, { updatedAtMs: _localUpdatedAtMs }]
     ];
     idbSetMany(entries).catch(e => {
       console.error('IndexedDB save failed.', e);
@@ -293,6 +298,215 @@ window.saveAll = function saveAll(){
     toast("Couldn't save your changes — storage may be full or unavailable.", 'error');
     console.error(e);
   }
+  // Mirror to Firestore too, so a mid-game low-battery shutdown or a lost/
+  // wiped device doesn't cost a signed-in user their match — local IndexedDB
+  // above stays the fast/offline source of truth either way, this is purely
+  // an extra safety net. No-ops instantly if the user isn't signed in.
+  scheduleCloudSave();
+}
+
+/* ============================================================
+   CLOUD BACKUP — Firestore mirror of the local save, for signed-in
+   users only. Guest / not-signed-in users keep working exactly as
+   before, IndexedDB-only.
+   ------------------------------------------------------------
+   Why this exists: IndexedDB already survives normal app closes/
+   backgrounding fine, but it lives only on this one device/browser
+   profile. If the phone dies mid-game, the browser's storage gets
+   cleared, or the user switches devices, that local copy can still
+   be gone for good. For a signed-in user, every saveAll() also
+   pushes the same match/session data to a per-account Firestore
+   doc (debounced, so rapid taps during live scoring don't spam
+   writes). Firestore's own offline-persistence cache (enabled in
+   firebase-init.js) then makes even *that* write durable the
+   instant it's queued, independent of whether the network request
+   finishes before the app dies.
+   ============================================================ */
+const CLOUD_BACKUP_COL = 'ladderBackups';
+const CLOUD_SAVE_DEBOUNCE_MS = 1200;   // wait for a quiet moment...
+const CLOUD_SAVE_MAX_WAIT_MS = 6000;   // ...but never delay longer than this during a burst of activity
+
+let _localUpdatedAtMs = 0;
+let _cloudSaveDebounceTimer = null;
+let _cloudSaveMaxWaitTimer = null;
+let _cloudSaveInFlight = null;      // Promise for the write currently in progress, if any
+let _cloudSavePending = false;      // true if state changed again while a write was in flight
+let _cloudSaveErrorShown = false;   // only toast once per session so a flaky connection doesn't spam the user
+let _cloudRestoreCheckedForUid = null; // avoids re-running the login restore-prompt more than once per session
+
+function cloudReady(){ return !!(window.fbAuth && window.fbDb); }
+function cloudUser(){ return cloudReady() ? window.fbAuth.currentUser : null; }
+
+// Same shape as the local IndexedDB save — every key saveAll() persists,
+// plus a couple of bookkeeping fields used to reconcile with local state.
+function buildCloudPayload(){
+  return {
+    players: state.players,
+    matches: state.matches,
+    current: state.current,
+    currentGeneration: state.currentGeneration,
+    settings: state.settings,
+    round: state.round,
+    tab: state.tab,
+    fixedDuos: state.fixedDuos || [],
+    sitOutQueue: state.sitOutQueue || [],
+    rotationCourts: state.rotationCourts || [],
+    scheduledGenerations: state.scheduledGenerations || [],
+    paddleStack: state.paddleStack || null,
+    updatedAtMs: _localUpdatedAtMs || Date.now(),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+}
+
+// Fires the actual Firestore write. Coalesces bursts: if a save comes in
+// while one is already in flight, it just flags "pending" and re-runs once
+// the current write settles, instead of queueing up N separate writes.
+async function cloudSaveNow(){
+  const user = cloudUser();
+  if(!user) return;
+  if(_cloudSaveInFlight){ _cloudSavePending = true; return; }
+  _cloudSavePending = false;
+  _cloudSaveInFlight = window.fbDb.collection(CLOUD_BACKUP_COL).doc(user.uid)
+    .set(buildCloudPayload(), { merge: true })
+    .then(() => { _cloudSaveErrorShown = false; })
+    .catch(e => {
+      console.error('Cloud backup save failed.', e);
+      if(!_cloudSaveErrorShown){
+        _cloudSaveErrorShown = true;
+        toast("Couldn't reach the cloud backup — your progress is still saved on this device.", 'warning');
+      }
+    })
+    .finally(() => {
+      _cloudSaveInFlight = null;
+      if(_cloudSavePending) cloudSaveNow();
+    });
+  return _cloudSaveInFlight;
+}
+
+function clearCloudSaveTimers(){
+  if(_cloudSaveDebounceTimer){ clearTimeout(_cloudSaveDebounceTimer); _cloudSaveDebounceTimer = null; }
+  if(_cloudSaveMaxWaitTimer){ clearTimeout(_cloudSaveMaxWaitTimer); _cloudSaveMaxWaitTimer = null; }
+}
+
+// Debounced entry point — this is what saveAll() calls on every mutation.
+function scheduleCloudSave(){
+  if(!cloudUser()) return; // not signed in — cloud backup stays off, local save above is unaffected
+  if(_cloudSaveDebounceTimer) clearTimeout(_cloudSaveDebounceTimer);
+  _cloudSaveDebounceTimer = setTimeout(() => {
+    clearCloudSaveTimers();
+    cloudSaveNow();
+  }, CLOUD_SAVE_DEBOUNCE_MS);
+  // Guarantee a flush at least every CLOUD_SAVE_MAX_WAIT_MS even if the user
+  // never stops interacting (e.g. rapid scoring taps keep resetting the
+  // debounce timer above).
+  if(!_cloudSaveMaxWaitTimer){
+    _cloudSaveMaxWaitTimer = setTimeout(() => {
+      clearCloudSaveTimers();
+      cloudSaveNow();
+    }, CLOUD_SAVE_MAX_WAIT_MS);
+  }
+}
+
+// Best-effort immediate flush, used when the page is about to be hidden or
+// killed (backgrounding on mobile, tab close, etc) — the moments a debounce
+// timer would otherwise not get a chance to fire.
+function flushCloudSaveNow(){
+  if(!cloudUser()) return;
+  if(!_cloudSaveDebounceTimer && !_cloudSaveMaxWaitTimer && !_cloudSavePending) return; // nothing pending
+  clearCloudSaveTimers();
+  cloudSaveNow();
+}
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') flushCloudSaveNow(); });
+window.addEventListener('pagehide', flushCloudSaveNow);
+
+// Does this backup/local snapshot actually have anything worth restoring?
+function cloudPayloadHasData(d){
+  return !!d && ((d.players && d.players.length) || (d.matches && d.matches.length) || d.current || d.currentGeneration);
+}
+function localStateHasData(){
+  return (state.players && state.players.length) || (state.matches && state.matches.length) || state.current || state.currentGeneration;
+}
+
+function applyCloudSnapshotToState(d){
+  state.players = d.players || [];
+  state.players.forEach(pl => {
+    if(typeof pl.isSub !== 'boolean') pl.isSub = false;
+    if(!pl.condition) pl.condition = 'ok';
+  });
+  state.matches = d.matches || [];
+  state.current = d.current || null;
+  state.currentGeneration = d.currentGeneration || null;
+  state.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+  state.round = parseInt(d.round, 10) || 0;
+  state.tab = d.tab || state.tab;
+  state.fixedDuos = Array.isArray(d.fixedDuos) ? d.fixedDuos : [];
+  state.sitOutQueue = Array.isArray(d.sitOutQueue) ? d.sitOutQueue : [];
+  state.rotationCourts = Array.isArray(d.rotationCourts) ? d.rotationCourts : [];
+  state.scheduledGenerations = Array.isArray(d.scheduledGenerations) ? d.scheduledGenerations : [];
+  state.paddleStack = d.paddleStack || null;
+  state.undo = null;
+  _localUpdatedAtMs = d.updatedAtMs || Date.now();
+}
+
+// Runs once per sign-in: reconciles whatever's already on this device
+// against whatever's already in the cloud for this account.
+async function reconcileCloudBackupForUser(user){
+  if(_cloudRestoreCheckedForUid === user.uid) return;
+  _cloudRestoreCheckedForUid = user.uid;
+  try{
+    const snap = await window.fbDb.collection(CLOUD_BACKUP_COL).doc(user.uid).get();
+    const cloud = snap.exists ? snap.data() : null;
+    const cloudHasData = cloudPayloadHasData(cloud);
+    const localHasData = localStateHasData();
+
+    if(!cloudHasData){
+      // Nothing backed up yet for this account — if this device already has
+      // a match/session going, push it up right away instead of waiting.
+      if(localHasData) cloudSaveNow();
+      return;
+    }
+    if(!localHasData){
+      // Fresh/empty device, existing cloud backup — just restore it silently.
+      applyCloudSnapshotToState(cloud);
+      saveAll(); renderAll();
+      toast('Restored your saved match from the cloud.', 'success');
+      return;
+    }
+    // Both sides have data — don't silently clobber either one. Newer wins,
+    // but always ask first since "newer" isn't always "the one you want".
+    const cloudMs = cloud.updatedAtMs || 0;
+    if(cloudMs > _localUpdatedAtMs + 2000){
+      showConfirmDialog({
+        icon: '☁️',
+        title: 'Restore cloud backup?',
+        message: `We found a newer saved match on your account (last saved ${fmtDate(new Date(cloudMs).toISOString())}). Restore it? This replaces what's currently on this device.`,
+        confirmLabel: 'Restore',
+        cancelLabel: 'Keep this device',
+        confirmClass: 'btn-primary',
+        onConfirm(){
+          applyCloudSnapshotToState(cloud);
+          saveAll(); renderAll();
+          toast('Cloud backup restored.', 'success');
+        },
+        onCancel(){
+          cloudSaveNow(); // this device's copy becomes the new cloud backup going forward
+        }
+      });
+    } else {
+      // Local is at least as fresh — just make sure the cloud has this copy too.
+      cloudSaveNow();
+    }
+  }catch(e){
+    console.error('Cloud backup reconcile failed.', e);
+  }
+}
+
+function initCloudSync(){
+  if(!cloudReady()) return;
+  window.fbAuth.onAuthStateChanged(user => {
+    if(user) reconcileCloudBackupForUser(user);
+    else { _cloudRestoreCheckedForUid = null; clearCloudSaveTimers(); }
+  });
 }
 
 /* ============================================================
@@ -8919,6 +9133,7 @@ function psConfirmStart() {
   renderAll();
   initInstallBanner();
   maybeShowNavHint();
+  initCloudSync(); // now that local state is loaded, start reconciling against any signed-in user's cloud backup
 })();
 
 (function initTabsFadeListeners(){
