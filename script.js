@@ -5076,7 +5076,8 @@ window.NAV_SECTIONS = [
   { id: 'rankings', label: 'Rankings', desc: 'ELO leaderboard', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>' },
   { id: 'stats', label: 'Stats', desc: 'Session performance breakdown', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>' },
   { id: 'history', label: 'History', desc: 'Past match results', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' },
-  { id: 'settings', label: 'Settings', desc: 'Match mode & configuration', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' }
+  { id: 'settings', label: 'Settings', desc: 'Match mode & configuration', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+  { id: 'about', label: 'About', desc: 'How it works & rules', svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="11.5"/><circle cx="12" cy="8" r="0.5" fill="currentColor" stroke="none"/></svg>' }
 ];
 
 function renderTabsNav(){
@@ -5152,6 +5153,7 @@ window.renderActiveView = function renderActiveView(){
     case 'stats': renderStatsView(target); break;
     case 'history': renderHistoryView(target); break;
     case 'settings': renderSettingsView(target); break;
+    case 'about': renderAboutView(target); break;
   }
 }
 
@@ -5876,6 +5878,122 @@ function renderHistoryView(el){
       });
     });
   }
+}
+
+/* ============================================================
+   ABOUT / HOW IT WORKS — static explainer view
+   ============================================================ */
+function renderAboutView(el){
+  el.innerHTML = `
+    <div class="about-hero">
+      <div class="about-hero-emoji">🎾</div>
+      <div class="about-hero-title">How Micro Ladder Works</div>
+      <div class="about-hero-sub">A quick guide to every mode, rule, and tab — so nothing feels like a mystery on court.</div>
+    </div>
+
+    <div class="section-title">1. Pick a Match Mode</div>
+    <p class="helper-text" style="margin:-2px 2px 12px;">Every session starts with one choice: how do you want matches generated? All three modes share the same roster, check-in list, ELO ratings, and history — you can switch between sessions any time from the Match tab.</p>
+
+    <div class="about-mode-card" style="border-color:rgba(215,242,61,0.35);">
+      <div class="about-mode-head">
+        <span class="about-mode-emoji">⚡</span>
+        <span class="about-mode-name">Smart Auto-Match <span class="about-mode-tag">Open Play</span></span>
+      </div>
+      <p>Each court runs completely on its own. The moment a court's game ends, the app instantly builds the next best-balanced match for that court from whoever is free — no waiting on other courts to finish.</p>
+      <ul>
+        <li>Matches are paired by an algorithm that keeps team ELO totals close, so games stay competitive.</li>
+        <li>Players who've sat out the longest, or played the fewest games, get bumped up in priority for the next match.</li>
+        <li>Best for casual, walk-in-and-play sessions where courts finish at different times.</li>
+      </ul>
+    </div>
+
+    <div class="about-mode-card" style="border-color:rgba(79,168,255,0.35);">
+      <div class="about-mode-head">
+        <span class="about-mode-emoji">🎯</span>
+        <span class="about-mode-name">Paddle Stack Queue <span class="about-mode-tag" style="color:var(--court); background:rgba(79,168,255,0.12); border-color:rgba(79,168,255,0.28);">Open Play</span></span>
+      </div>
+      <p>The classic pickleball "stack" rotation. Winners of a game move together into the winners' line, losers move into the losers' line, and the next foursome is pulled FIFO from the shared queue — winners play winners, losers play losers, in blocks of 4.</p>
+      <ul>
+        <li>First round follows either a shuffled random order or your Player List order — your choice at setup.</li>
+        <li><strong>Fixed Duos 🔗</strong> lock two players as permanent partners so they always start and stay on the same team.</li>
+        <li><strong>Male/Female Generation</strong> can pair Mixed (M+F), Separate (M+M and F+F), or Off (ignore gender) whenever the roster allows it.</li>
+        <li>Best for a single organized line at the court — the traditional "stack" everyone already knows.</li>
+      </ul>
+    </div>
+
+    <div class="about-mode-card" style="border-color:rgba(62,213,152,0.35);">
+      <div class="about-mode-head">
+        <span class="about-mode-emoji">🔀</span>
+        <span class="about-mode-name">Round Robin</span>
+      </div>
+      <p>Every active player is scheduled every "generation" — a full round across all your courts happens together, then the app generates the next full round once scores are in.</p>
+      <ul>
+        <li>You set the number of courts and a target session length (or a custom number of matches) up front.</li>
+        <li>If the active player count doesn't divide evenly, extra players sit out in fair rotation and get priority to play the next generation.</li>
+        <li>Best for planned events, tournaments-lite, or when you want everyone's total games to come out even.</li>
+      </ul>
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">2. Scoring Rules</div>
+    <div class="card">
+      <div class="about-rule"><span class="about-rule-ico">🏐</span><div><strong>Winning Score</strong><p>Set once per session in Session Setup (default 11). First team to reach it <em>and</em> lead by at least 2 points wins the game.</p></div></div>
+      <div class="about-rule"><span class="about-rule-ico">🏁</span><div><strong>Race to 2</strong><p>Optional toggle in Settings. If both teams hit a 10–10 tie, the app offers sudden death: first team to win 2 straight points takes the match instead of playing win-by-2 to the target score.</p></div></div>
+      <div class="about-rule"><span class="about-rule-ico">🔁</span><div><strong>Substitutions</strong><p>Mid-match, you can swap any player for someone sitting out or a registered Sub Player. The swap is logged in Match History so the record stays accurate.</p></div></div>
+      <div class="about-rule" style="margin-bottom:0;"><span class="about-rule-ico">🗣️</span><div><strong>Audio Scoring &amp; Voice Announce</strong><p>Optional sound cues on every point, plus a spoken score call (server's score, opponent's score, server number) and a "Side out" call — handy when everyone's hands are full.</p></div></div>
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">3. Rankings &amp; Ratings</div>
+    <div class="card">
+      <div class="about-rule"><span class="about-rule-ico">📈</span><div><strong>ELO Rating</strong><p>Every player starts at 1000. After each game, rating points move between the two teams based on the classic ELO formula — beating a higher-rated team earns more, beating a lower-rated team earns less, and losing as the favorite costs more than losing as the underdog.</p></div></div>
+      <div class="about-rule"><span class="about-rule-ico">🎾</span><div><strong>DUPR Rating</strong><p>An optional, separate field per player (e.g. 3.067) if your group already tracks official DUPR — shown alongside ELO but never edited automatically by match results.</p></div></div>
+      <div class="about-rule" style="margin-bottom:0;"><span class="about-rule-ico">🏆</span><div><strong>Rankings tab</strong><p>Sort the whole roster by Rating, Win %, Games Played, or Avg Score. "Margin" is average points scored minus points allowed per game — a quick read on how dominant a player's wins (or close their losses) have been.</p></div></div>
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">4. Fair-Play Tools</div>
+    <div class="card">
+      <div class="about-rule"><span class="about-rule-ico">🚪</span><div><strong>Check-In</strong><p>Mark who's actually on-site and ready to play. Only checked-in, active players are pulled into new matches — anyone marked tired, injured, or unable to play is skipped until you clear that status.</p></div></div>
+      <div class="about-rule"><span class="about-rule-ico">⏳</span><div><strong>Sit-Out Priority Balancing</strong><p>Whenever the player count doesn't split evenly, the app tracks who's sat out most recently/most often and bumps them to the front of the line for the very next match — so nobody gets stuck watching for too long.</p></div></div>
+      <div class="about-rule" style="margin-bottom:0;"><span class="about-rule-ico">🔗</span><div><strong>Fixed Duos</strong><p>Lock any two players as a permanent doubles pair (great for real-life partners). Honored automatically in Paddle Stack Queue.</p></div></div>
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">5. Every Tab, Explained</div>
+    <div class="card" style="padding:6px 4px;">
+      ${[
+        ['📍 Match','Shows the live scoreboard for the match(es) in progress right now — tap in scores as you play, and the next match is queued up automatically underneath.'],
+        ['📋 Queue','Everyone not currently on court, ranked by who\'s next up. In Paddle Stack this is the Winners/Losers line; in Smart Auto-Match it\'s a live priority ranking.'],
+        ['👥 Players','Your full roster — add, edit, or bench players, set DUPR/gender, register Sub Players, and see who\'s checked in, active, or marked out.'],
+        ['🏆 Rankings','The ELO leaderboard for the whole group, sortable by Rating, Win %, Games, or Avg Score.'],
+        ['📊 Stats','A per-player breakdown — wins, losses, longest streak, total sit-outs, and each player\'s most frequent teammates and opponents.'],
+        ['🗓️ History','Every completed match ever recorded, searchable by player name, with substitution notes and session summaries.'],
+        ['⚙️ Settings','Toggle Audio Scoring, Voice Announce, and Race to 2, plus backup/restore your data and reset options.']
+      ].map(([label, desc]) => `
+        <div class="about-tab-row">
+          <div class="about-tab-label">${label}</div>
+          <div class="about-tab-desc">${desc}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="section-title" style="margin-top:22px;">Quick FAQ</div>
+    <div class="card" style="padding:4px;">
+      <details class="about-faq">
+        <summary>Can I switch match modes mid-session?</summary>
+        <p>Yes. Open the Match tab and start a new session — you'll get the mode picker again. Past matches, ratings, and history are never lost when you switch.</p>
+      </details>
+      <details class="about-faq">
+        <summary>What happens if I don't have a multiple of 4 players?</summary>
+        <p>The app automatically sits out however many players don't fit a full foursome, using Sit-Out Priority Balancing so it's never the same people missing out every round.</p>
+      </details>
+      <details class="about-faq">
+        <summary>Does losing a game hurt my ELO a lot?</summary>
+        <p>It depends on the matchup. Losing to a much stronger team barely moves your rating; losing to a much weaker team costs more, since you were expected to win.</p>
+      </details>
+      <details class="about-faq" style="border-bottom:none;">
+        <summary>Is my data saved anywhere online?</summary>
+        <p>Everything is stored locally on your device by default. Use Settings → Export Backup to save a copy, or Import Backup to restore one on another device.</p>
+      </details>
+    </div>
+  `;
 }
 
 function renderSettingsView(el){
