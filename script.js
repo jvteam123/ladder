@@ -829,6 +829,19 @@ function goToAddPlayer(message){
   }, 250);
 }
 
+// Inserts a newly-checked-in / newly-added player into the Paddle Stack
+// queue. New arrivals jump ahead of players who've been waiting a full
+// rotation, but among the new arrivals themselves they queue up in the
+// order they actually checked in — the player who checked in first plays
+// first. Placing them right after the existing run of "New" (tag 'N')
+// entries (instead of always at index 0) keeps that first-in-first-out
+// order instead of each new arrival bumping the last one back.
+function psInsertNewArrival(ps, playerId){
+  let insertAt = 0;
+  while (insertAt < ps.queue.length && ps.queue[insertAt].tag === 'N') insertAt++;
+  ps.queue.splice(insertAt, 0, { id: playerId, tag: 'N', sinceRound: state.round });
+}
+
 function addPlayer(name, isSub, duprRating, gender){
   name = (name||'').trim();
   if(!name){ toast('Enter a name first.', 'warning'); return; }
@@ -845,7 +858,7 @@ function addPlayer(name, isSub, duprRating, gender){
   // the front of the queue instead of leaving them stranded until the next
   // full session restart. Sub Players stay benched as usual.
   if (state.paddleStack && p.active && !p.isSub) {
-    state.paddleStack.queue.unshift({ id: p.id, tag: 'N', sinceRound: state.round });
+    psInsertNewArrival(state.paddleStack, p.id);
     psFillCourts();
   }
   saveAll(); renderAll();
@@ -1038,7 +1051,7 @@ function togglePlayerActive(id){
     const inWBlock = ps.wBlock.some(e => e.id === p.id);
     const inLBlock = ps.lBlock.some(e => e.id === p.id);
     if (!onCourt && !inQueue && !inWBlock && !inLBlock) {
-      ps.queue.unshift({ id: p.id, tag: 'N', sinceRound: state.round });
+      psInsertNewArrival(ps, p.id);
       psFillCourts();
       saveAll(); renderAll();
       toast(p.name + ' checked in — moved to front of queue! 🆕', 'success');
