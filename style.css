@@ -2031,3 +2031,13 @@ input, textarea, select { -webkit-user-select: text; user-select: text; touch-ac
 .about-faq p{ font-size:12.5px; line-height:1.55; color:var(--text-dim); margin:8px 0 2px; }
 
 html.light-mode .about-mode-tag{ color:var(--ball-dim); }
+
+/* ---------- Navigate menu: divider before secondary/utility tabs ---------- */
+.nav-menu-divider{
+  display:flex; align-items:center; gap:10px;
+  margin:14px 2px 8px; color:var(--text-faint); font-size:10.5px;
+  font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+}
+.nav-menu-divider::before, .nav-menu-divider::after{
+  content:''; flex:1; height:1px; background:var(--line-soft);
+}
