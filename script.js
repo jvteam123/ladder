@@ -504,6 +504,15 @@ async function reconcileCloudBackupForUser(user){
 function initCloudSync(){
   if(!cloudReady()) return;
   window.fbAuth.onAuthStateChanged(user => {
+    // Refresh the Match tab right away so the sign-in banner reflects the
+    // now-known auth state without waiting on the slower cloud reconcile
+    // below. On a page refresh, Firebase Auth resolves a persisted session
+    // asynchronously — the very first render (right after loadState())
+    // happens before that resolves, so window.fbAuth.currentUser is still
+    // null then and the banner shows "guest" for a moment. This listener
+    // fires again once the real signed-in state is known, so re-rendering
+    // here is what actually flips the banner back to "Signed in as ...".
+    if(state.tab === 'match') renderActiveView();
     if(user) reconcileCloudBackupForUser(user);
     else { _cloudRestoreCheckedForUid = null; clearCloudSaveTimers(); }
   });
