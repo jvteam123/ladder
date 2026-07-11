@@ -5401,7 +5401,50 @@ window.renderActiveView = function renderActiveView(){
 /* ============================================================
    VIEW COMPONENT GENERATORS
    ============================================================ */
+/* ---------- Cloud sync sign-in banner (Match tab) ----------
+   Small status bar shown at the top of every Match-tab view (Open Play,
+   Round Robin, Paddle Stack, empty states). Not signed in → nudge to sign
+   in so the generated match also gets saved to Firestore (see saveAll()/
+   scheduleCloudSave() above), not just this device's IndexedDB. Signed in
+   → quick confirmation + a way to sign out. Reuses the exact same auth
+   modal/click-handlers as Open Play (data-action="op-open-auth-modal" /
+   "op-sign-out", both wired in openplay.js) so there's only one sign-in
+   UI in the whole app. */
+function ladderCloudSyncBannerHtml(){
+  if(!(window.fbAuth && window.fbDb)) return ''; // Firebase not configured on this build — nothing to offer
+  const user = window.fbAuth.currentUser;
+  if(user){
+    const name = user.displayName || (user.email ? user.email.split('@')[0] : 'Player');
+    return `
+      <div class="cloud-sync-bar cloud-sync-on">
+        <span class="cloud-sync-icon">☁️</span>
+        <span class="cloud-sync-text">Signed in as <strong>${esc(name)}</strong> — this match is also saved online</span>
+        <button type="button" class="cloud-sync-btn" data-action="op-sign-out">Sign out</button>
+      </div>`;
+  }
+  return `
+    <div class="cloud-sync-bar cloud-sync-off">
+      <span class="cloud-sync-icon">☁️</span>
+      <span class="cloud-sync-text">Playing as a guest — this match is only saved on this device.</span>
+      <button type="button" class="cloud-sync-btn cloud-sync-btn-primary" data-action="op-open-auth-modal" data-after="save your match online">Sign in</button>
+    </div>`;
+}
+
+// Wraps a real DOM element so `el.innerHTML = html` transparently prepends
+// the cloud-sync banner — every render branch in renderMatchView() (and
+// renderPaddleStackView(), which it delegates to) just keeps doing a plain
+// `el.innerHTML = ...` and gets the banner for free, with no need to touch
+// each branch individually.
+function withCloudSyncBanner(rawEl){
+  return {
+    set innerHTML(html){ rawEl.innerHTML = ladderCloudSyncBannerHtml() + html; },
+    get innerHTML(){ return rawEl.innerHTML; }
+  };
+}
+
 function renderMatchView(el){
+  el = withCloudSyncBanner(el);
+
   // Paddle Stack Open Play
   if (state.settings.matchMode === 'PaddleStack' && state.paddleStack) {
     renderPaddleStackView(el);
