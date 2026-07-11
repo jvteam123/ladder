@@ -55,7 +55,8 @@ const DEFAULT_SETTINGS = {
   generateFullSchedule: false, // Round Robin "one-time generation": build every round of the chosen session length right away instead of one generation at a time
   psRandomizeStart: true,  // Paddle Stack: shuffle the initial queue instead of using roster/check-in order
   psBlockSize: 4,          // Paddle Stack: how many winners/losers accumulate before a block flushes to the queue
-  psMixedGenderPairing: true // Paddle Stack: pair a male with a female partner at the start whenever the roster allows it
+  psMixedGenderPairing: true, // deprecated — kept only so old saved states migrate cleanly into psGenderPairingMode below
+  psGenderPairingMode: 'mixed' // Paddle Stack: 'mixed' pairs a male with a female partner, 'separate' pairs male-with-male and female-with-female, 'off' ignores gender entirely — all whenever the roster allows it
 };
 
 // Round Robin "session length" choices offered when starting a fresh session.
@@ -6057,6 +6058,10 @@ document.addEventListener('click', function(e){
       state.settings.psRandomizeStart = (t.dataset.value === 'true');
       openPaddleStackSetupModal();
       break;
+    case 'ps-set-gender-mode':
+      state.settings.psGenderPairingMode = t.dataset.value;
+      openPaddleStackSetupModal();
+      break;
     case 'ps-confirm-start': psConfirmStart(); break;
     case 'ps-set-winner': confirmSelectWinner(liveMatchCtxPS(t.dataset.court), t.dataset.team); break;
     case 'ps-score-adjust': adjustMatchScore(liveMatchCtxPS(t.dataset.court), t.dataset.team, parseInt(t.dataset.delta,10)); break;
@@ -7076,9 +7081,11 @@ function initInstallBanner(){
 // themselves. Players with no gender set are treated as flexible and never
 // block a possible mixed pairing.
 // Gender-based pairing itself is controlled by the "Male/Female Generation"
-// on/off switch in Paddle Stack Setup (state.settings.psMixedGenderPairing).
-// When it's off, players are simply paired up in pool order (still honoring
-// Fixed Duos first) without regard to gender.
+// mode in Paddle Stack Setup (state.settings.psGenderPairingMode):
+//   'mixed'    — pair a male with a female partner wherever possible
+//   'separate' — pair males with males and females with females wherever possible
+//   'off'      — ignore gender entirely, players are simply paired up in pool
+//                order (still honoring Fixed Duos first)
 function psBuildMixedGenderOrder(pool, randomize) {
   // Fixed Duo pairs take priority over gender-based pairing — pull them out
   // as forced pairs first, so partners always start out adjacent in the
@@ -7095,10 +7102,13 @@ function psBuildMixedGenderOrder(pool, randomize) {
     }
   });
 
-  const genderPairingOn = state.settings.psMixedGenderPairing !== false;
+  // Fall back to the legacy boolean if the new mode hasn't been set yet on
+  // an old saved state, so existing users keep their previous behavior.
+  const genderMode = state.settings.psGenderPairingMode
+    || (state.settings.psMixedGenderPairing === false ? 'off' : 'mixed');
   let pairs = [];
 
-  if (genderPairingOn) {
+  if (genderMode === 'mixed') {
     const males = remaining.filter(p => p.gender === 'M');
     const females = remaining.filter(p => p.gender === 'F');
     const others = remaining.filter(p => p.gender !== 'M' && p.gender !== 'F');
@@ -7110,6 +7120,30 @@ function psBuildMixedGenderOrder(pool, randomize) {
     // Whichever gender had the surplus, plus everyone with no gender set,
     // gets paired up together — there's no opposite-gender partner left to give them.
     const leftover = males.slice(mixedCount).concat(females.slice(mixedCount)).concat(others);
+    if (randomize) shuffleArray(leftover);
+    for (let i = 0; i < leftover.length; i += 2) {
+      pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
+    }
+  } else if (genderMode === 'separate') {
+    // Same-gender partnerships: males paired with males, females paired with
+    // females. Mirrors the 'mixed' logic above but keeps genders apart
+    // instead of crossing them.
+    const males = remaining.filter(p => p.gender === 'M');
+    const females = remaining.filter(p => p.gender === 'F');
+    const others = remaining.filter(p => p.gender !== 'M' && p.gender !== 'F');
+    if (randomize) { shuffleArray(males); shuffleArray(females); shuffleArray(others); }
+
+    // An odd count on either side leaves one player without a same-gender
+    // partner — pull that one out to be paired up in the leftover pool below.
+    const maleOdd = males.length % 2 === 1 ? males.pop() : null;
+    const femaleOdd = females.length % 2 === 1 ? females.pop() : null;
+
+    for (let i = 0; i < males.length; i += 2) pairs.push([males[i], males[i + 1]]);
+    for (let i = 0; i < females.length; i += 2) pairs.push([females[i], females[i + 1]]);
+
+    // The odd-one-out male/female (if any), plus everyone with no gender set,
+    // gets paired up together — there's no same-gender partner left for them.
+    const leftover = [maleOdd, femaleOdd].filter(Boolean).concat(others);
     if (randomize) shuffleArray(leftover);
     for (let i = 0; i < leftover.length; i += 2) {
       pairs.push(leftover[i + 1] ? [leftover[i], leftover[i + 1]] : [leftover[i]]);
@@ -7976,7 +8010,13 @@ function openPaddleStackSetupModal() {
   // Block Size is no longer configurable from the setup screen — always use
   // the classic paddle-stack default of 4 winners/losers per block.
   state.settings.psBlockSize = 4;
-  const currentGenderPairing = state.settings.psMixedGenderPairing !== false;
+  const currentGenderMode = state.settings.psGenderPairingMode
+    || (state.settings.psMixedGenderPairing === false ? 'off' : 'mixed');
+  const genderModeHint = currentGenderMode === 'separate'
+    ? 'Pairs a male with another male, and a female with another female, at the start of the session whenever the roster allows it.'
+    : currentGenderMode === 'off'
+      ? 'Gender is ignored when building the starting order.'
+      : 'Pairs a male with a female partner at the start of the session whenever the roster allows it.';
 
   openModal(`
     <div class="modal-title">🎯 Paddle Stack Setup</div>
@@ -7990,18 +8030,12 @@ function openPaddleStackSetupModal() {
     <p class="helper-text" style="margin:2px 2px 8px;">${currentRandomize ? 'First matches are shuffled — not based on who checked in first.' : 'First matches follow roster/check-in order.'}</p>
 
     <div class="eyebrow" style="margin:14px 2px 8px;">Male/Female Generation</div>
-    <div class="card" style="margin:0 0 4px; padding:4px 14px;">
-      <div class="toggle-row">
-        <div>
-          <div class="t-label">⚥ Mixed Gender Pairing</div>
-          <div class="t-hint">Pair a male with a female partner at the start of the session whenever the roster allows it. Turn off to ignore gender when building the starting order.</div>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="psGenderPairingToggle" ${currentGenderPairing ? 'checked' : ''}>
-          <div class="track"></div><div class="thumb"></div>
-        </label>
-      </div>
+    <div style="display:flex; gap:8px; margin-bottom:4px;">
+      <button type="button" class="btn ${currentGenderMode === 'mixed' ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-set-gender-mode" data-value="mixed">⚥ Mixed</button>
+      <button type="button" class="btn ${currentGenderMode === 'separate' ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-set-gender-mode" data-value="separate">🚻 Separate</button>
+      <button type="button" class="btn ${currentGenderMode === 'off' ? 'btn-primary' : 'btn-secondary'} btn-sm" style="flex:1;" data-action="ps-set-gender-mode" data-value="off">➖ Off</button>
     </div>
+    <p class="helper-text" style="margin:2px 2px 8px;">${genderModeHint}</p>
 
     <div class="eyebrow" style="margin:16px 2px 8px;">Fixed Duos 🔗</div>
     <div class="card" style="margin:0 0 4px;">
@@ -8643,8 +8677,6 @@ function psConfirmStart() {
     const v = parseInt(scoreEl.value, 10);
     state.settings.winningScore = (isNaN(v) || v < 1) ? 11 : v;
   }
-  const genderEl = document.getElementById('psGenderPairingToggle');
-  if (genderEl) state.settings.psMixedGenderPairing = genderEl.checked;
   state.settings.matchMode = 'PaddleStack';
   saveAll();
   closeModal();
@@ -8917,5 +8949,3 @@ const _kitchenLadderSig = Object.freeze({
   }, true);
 
 })();
-
-
