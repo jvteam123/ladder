@@ -197,6 +197,25 @@ input,select,textarea{touch-action:manipulation; -webkit-tap-highlight-color:tra
 .empty-state p{margin:4px 0 0; font-size:13px; line-height:1.5;}
 .empty-state .et{font-weight:700; color:var(--text-dim); font-size:14px;}
 
+/* ---------- Cloud sync banner (Match tab) ---------- */
+.cloud-sync-bar{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:10px 12px; border-radius:var(--radius-md); margin:0 2px 12px;
+  font-size:12.5px; line-height:1.4;
+}
+.cloud-sync-icon{font-size:14px; flex:none;}
+.cloud-sync-text{flex:1 1 180px; color:var(--text-dim);}
+.cloud-sync-text strong{color:var(--text); font-weight:700;}
+.cloud-sync-btn{
+  appearance:none; border:none; border-radius:var(--radius-sm); padding:7px 12px;
+  font-weight:700; font-size:12px; cursor:pointer; flex:none;
+  background:var(--surface-2); color:var(--text-dim); border:1px solid var(--line);
+}
+.cloud-sync-btn:active{transform:scale(0.96);}
+.cloud-sync-btn-primary{background:var(--ball); color:#10150a; border:none;}
+.cloud-sync-off{background:var(--surface); border:1px solid var(--line-soft);}
+.cloud-sync-on{background:rgba(62,213,152,0.08); border:1px solid rgba(62,213,152,0.28);}
+
 /* ---------- Buttons ---------- */
 .btn{
   appearance:none; border:none; border-radius:var(--radius-md); padding:12px 16px;
