@@ -33,3 +33,17 @@ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() =>
 window.fbAuth = firebase.auth();
 window.fbDb = firebase.firestore();
 window.fbGoogleProvider = new firebase.auth.GoogleAuthProvider();
+
+// Turn on Firestore's offline cache. This makes writes (like the Ladder
+// cloud backup in script.js) durable the moment they're queued client-side
+// — even if the app is killed or the phone dies a split second later —
+// because Firestore stores pending writes in its own local IndexedDB and
+// auto-flushes them to the server the next time the app opens with a
+// network connection. `synchronizeTabs` keeps multiple open tabs in sync
+// off the same cache. Safe to ignore failures (e.g. multiple tabs on a
+// browser without multi-tab support, or private browsing) — the app just
+// falls back to network-only Firestore, and the local IndexedDB save (in
+// script.js) still covers offline use either way.
+if(window.fbDb.enablePersistence){
+  window.fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+}
