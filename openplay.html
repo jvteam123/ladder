@@ -1,0 +1,2001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paddle Stack Queue</title>
+<meta name="theme-color" content="#1B2A28">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --court:#F1F5F0;
+  --ink:#152420;
+  --turf:#2F6F5E;
+  --turf-deep:#204E42;
+  --turf-pale:#DCEBE4;
+  --clay:#E4693B;
+  --clay-deep:#C6522A;
+  --slate:#6B7A78;
+  --line:#DCE3DE;
+  --surface:#FFFFFF;
+  --danger:#B4483E;
+  --danger-pale:#F7E4E1;
+  --radius:14px;
+  --radius-sm:9px;
+  --shadow-sm:0 1px 3px rgba(21,36,32,.08), 0 1px 2px rgba(21,36,32,.06);
+  --shadow-md:0 8px 24px rgba(21,36,32,.12);
+  --font-display:'Archivo Black', Impact, sans-serif;
+  --font-body:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:var(--court);
+  color:var(--ink);
+  font-family:var(--font-body);
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior:none;
+}
+button{font-family:inherit}
+input,select{font-family:inherit}
+::selection{background:var(--turf-pale)}
+:focus-visible{outline:3px solid var(--clay);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+/* ---------- Topbar ---------- */
+.topbar{
+  display:flex;align-items:center;gap:.85rem;
+  padding:.75rem 1rem;
+  background:var(--ink);color:#fff;
+  position:sticky;top:0;z-index:40;
+  box-shadow:var(--shadow-sm);
+}
+.topbar .logo{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
+.topbar .logo svg{width:26px;height:34px}
+.topbar .session-name{
+  font-family:var(--font-display);
+  font-size:1.05rem;letter-spacing:.02em;
+  background:transparent;border:none;color:#fff;
+  border-bottom:2px solid transparent;
+  padding:2px 2px;max-width:40vw;
+  transition:border-color .15s;
+}
+.topbar .session-name:hover,.topbar .session-name:focus{border-bottom-color:rgba(255,255,255,.4)}
+.topbar .spacer{flex:1}
+.topbar .pill{
+  font-family:var(--font-mono);font-size:.72rem;font-weight:600;
+  background:rgba(255,255,255,.1);color:#cfe6dd;
+  padding:.32rem .6rem;border-radius:99px;white-space:nowrap;
+}
+.icon-btn{
+  width:38px;height:38px;border-radius:10px;border:none;
+  background:rgba(255,255,255,.08);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:background .15s, transform .1s;flex-shrink:0;
+}
+.icon-btn:hover{background:rgba(255,255,255,.18)}
+.icon-btn:active{transform:scale(.94)}
+.icon-btn svg{width:19px;height:19px}
+
+/* ---------- App shell ---------- */
+.app-shell{
+  display:grid;
+  grid-template-columns:320px 1fr;
+  gap:0;
+  align-items:start;
+  min-height:calc(100vh - 58px);
+}
+.stack-rail{
+  border-right:1px solid var(--line);
+  background:var(--surface);
+  min-height:calc(100vh - 58px);
+  display:flex;flex-direction:column;
+  position:sticky;top:58px;
+  height:calc(100vh - 58px);
+}
+.panel-head{
+  padding:1.1rem 1.1rem .6rem;
+  display:flex;align-items:baseline;justify-content:space-between;gap:.5rem;
+}
+.panel-head h2{
+  font-family:var(--font-display);font-size:1.02rem;margin:0;
+  letter-spacing:.01em;
+}
+.count-badge{
+  font-family:var(--font-mono);font-weight:600;font-size:.78rem;
+  color:var(--turf-deep);background:var(--turf-pale);
+  padding:.15rem .55rem;border-radius:99px;
+}
+.add-form{
+  display:flex;gap:.4rem;padding:0 1.1rem .8rem;
+}
+.add-form input{
+  flex:1;min-width:0;border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.6rem .7rem;font-size:.88rem;background:var(--court);color:var(--ink);
+}
+.add-form input:focus{border-color:var(--turf);background:#fff}
+.add-form button{
+  border:none;background:var(--turf);color:#fff;border-radius:var(--radius-sm);
+  padding:0 .95rem;font-weight:700;font-size:.85rem;cursor:pointer;
+  transition:background .15s;
+}
+.add-form button:hover{background:var(--turf-deep)}
+.add-hint{padding:0 1.1rem .7rem;font-size:.72rem;color:var(--slate)}
+
+.quick-add-panel{
+  margin:0 1.1rem .8rem;padding:.65rem .75rem;
+  background:var(--turf-pale);border:1.5px solid var(--turf-pale);border-radius:var(--radius);
+  display:flex;flex-direction:column;gap:.5rem;
+}
+.quick-add-panel[hidden]{display:none}
+.quick-add-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.quick-add-title{
+  font-family:var(--font-mono);font-size:.68rem;font-weight:700;letter-spacing:.03em;
+  text-transform:uppercase;color:var(--turf-deep);
+}
+.quick-add-all-btn{
+  border:none;background:var(--turf);color:#fff;font-size:.7rem;font-weight:700;
+  padding:.2rem .55rem;border-radius:99px;cursor:pointer;flex-shrink:0;transition:background .15s;
+}
+.quick-add-all-btn:hover{background:var(--turf-deep)}
+.quick-add-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.quick-add-chip{
+  display:flex;align-items:center;gap:.3rem;
+  border:1.5px solid var(--turf);background:#fff;color:var(--turf-deep);
+  font-size:.78rem;font-weight:600;padding:.28rem .55rem;border-radius:99px;cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.quick-add-chip:hover{background:var(--turf);color:#fff}
+.quick-add-chip svg{width:11px;height:11px;flex-shrink:0}
+body.session-locked .quick-add-panel{opacity:.55;pointer-events:none}
+
+.arrivals-panel{
+  margin:0 1.1rem .8rem;padding:.65rem .75rem;
+  background:#FBF3E7;border:1.5px solid #EFDDBB;border-radius:var(--radius);
+  display:flex;flex-direction:column;gap:.5rem;
+}
+.arrivals-panel[hidden]{display:none}
+.arrivals-head{display:flex;align-items:center;gap:.5rem}
+.arrivals-title{
+  font-family:var(--font-mono);font-size:.68rem;font-weight:700;letter-spacing:.03em;
+  text-transform:uppercase;color:#8a6d2f;
+}
+.arrivals-head .count-badge{color:#8a6d2f;background:#F2E4C4}
+.checkin-all-btn{
+  margin-left:auto;border:none;background:var(--turf);color:#fff;font-size:.7rem;font-weight:700;
+  padding:.2rem .55rem;border-radius:99px;cursor:pointer;flex-shrink:0;transition:background .15s;
+}
+.checkin-all-btn:hover{background:var(--turf-deep)}
+.checkin-all-btn:disabled{opacity:.4;cursor:default}
+.arrivals-list{display:flex;flex-direction:column;gap:.4rem}
+.arrival-row{
+  display:flex;align-items:center;gap:.5rem;
+  background:#fff;border:1.5px solid #EFDDBB;border-radius:var(--radius-sm);
+  padding:.4rem .5rem;
+}
+.arrival-name{flex:1;min-width:0;font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arrival-checkin-btn{
+  border:none;background:var(--turf);color:#fff;font-weight:700;font-size:.75rem;
+  padding:.32rem .6rem;border-radius:99px;cursor:pointer;flex-shrink:0;transition:background .15s;
+}
+.arrival-checkin-btn:hover{background:var(--turf-deep)}
+.arrival-remove-btn{
+  border:none;background:none;color:var(--slate);cursor:pointer;
+  width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.arrival-remove-btn:hover{background:var(--danger-pale);color:var(--danger)}
+.arrival-remove-btn svg{width:12px;height:12px}
+body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
+
+.stack-list{
+  flex:1;overflow-y:auto;padding:.2rem .75rem 1rem;
+  display:flex;flex-direction:column;gap:.5rem;
+}
+.stack-empty{
+  margin:2rem 1rem;padding:1.6rem 1rem;text-align:center;color:var(--slate);
+  border:1.5px dashed var(--line);border-radius:var(--radius);font-size:.85rem;
+}
+
+.paddle{
+  display:flex;align-items:center;gap:.6rem;
+  background:var(--surface);border:1.5px solid var(--line);
+  border-radius:var(--radius-sm);
+  padding:.5rem .6rem;
+  touch-action:pan-y;
+  transition:box-shadow .15s, border-color .15s, transform .12s;
+  position:relative;
+}
+.paddle.dragging{box-shadow:var(--shadow-md);border-color:var(--turf);z-index:5;cursor:grabbing}
+.paddle .pos{
+  font-family:var(--font-mono);font-weight:600;font-size:.95rem;
+  color:var(--clay-deep);width:24px;text-align:center;flex-shrink:0;
+}
+.paddle .glyph{width:20px;height:28px;flex-shrink:0;color:var(--turf)}
+.paddle .name-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.paddle .sub-row{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}
+.paddle .name{font-weight:600;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:.3rem}
+.paddle .win-chip{font-size:.68rem;color:var(--clay-deep);flex-shrink:0}
+.paddle .games-chip{
+  font-family:var(--font-mono);font-size:.62rem;font-weight:600;
+  color:var(--slate);background:var(--court);
+  padding:.05rem .4rem;border-radius:99px;flex-shrink:0;
+}
+.paddle .tag-pill{
+  font-family:var(--font-mono);font-size:.6rem;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;padding:.08rem .4rem;border-radius:99px;width:fit-content;
+}
+.paddle .tag-pill.new{background:var(--turf-pale);color:var(--turf-deep)}
+.paddle .tag-pill.queued{background:#EFE9DC;color:#8a6d2f}
+.paddle .reorder{display:flex;flex-direction:column;gap:1px}
+.paddle .reorder button{
+  border:none;background:none;color:var(--slate);cursor:pointer;
+  padding:0;width:18px;height:13px;display:flex;align-items:center;justify-content:center;
+  border-radius:3px;
+}
+.paddle .reorder button:hover{background:var(--court);color:var(--ink)}
+.paddle .reorder button svg{width:11px;height:11px}
+.paddle .drag-handle{cursor:grab;color:var(--slate);display:flex;align-items:center;padding:2px}
+.paddle .drag-handle svg{width:14px;height:14px}
+.paddle .remove-btn{
+  border:none;background:none;color:var(--slate);cursor:pointer;
+  width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.paddle .remove-btn:hover{background:var(--danger-pale);color:var(--danger)}
+.paddle.next-up{border-color:var(--turf);background:var(--turf-pale)}
+.paddle.next-up .pos{color:var(--turf-deep)}
+
+.blocks-panel{
+  margin:0 1.1rem .8rem;padding:.7rem .75rem;
+  background:var(--court);border:1.5px dashed var(--line);border-radius:var(--radius);
+  display:flex;flex-direction:column;gap:.65rem;
+}
+.blocks-panel[hidden]{display:none}
+.blocks-panel-title{
+  font-family:var(--font-mono);font-size:.68rem;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--slate);
+}
+.block-group{display:flex;flex-direction:column;gap:.35rem}
+.block-head{display:flex;align-items:center;gap:.4rem}
+.block-head-label{font-weight:700;font-size:.78rem;color:var(--ink)}
+.block-head-count{
+  font-family:var(--font-mono);font-weight:600;font-size:.68rem;
+  color:var(--turf-deep);background:var(--turf-pale);
+  padding:.05rem .45rem;border-radius:99px;
+}
+.block-flush-btn{
+  margin-left:auto;border:1.5px solid var(--line);background:var(--surface);color:var(--slate);
+  font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:99px;cursor:pointer;
+  transition:border-color .15s,color .15s;
+}
+.block-flush-btn:hover{border-color:var(--turf);color:var(--turf-deep)}
+.block-flush-btn:disabled{opacity:.4;cursor:default}
+.block-flush-btn:disabled:hover{border-color:var(--line);color:var(--slate)}
+.block-list{display:flex;flex-direction:column;gap:.3rem}
+.block-item{
+  display:flex;align-items:center;gap:.4rem;
+  background:var(--surface);border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.35rem .55rem;font-size:.8rem;font-weight:600;
+}
+.block-item .block-item-pos{
+  font-family:var(--font-mono);font-size:.75rem;color:var(--slate);width:16px;flex-shrink:0;
+}
+.block-item .block-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.block-empty{font-size:.72rem;color:var(--slate);padding:.15rem .1rem}
+
+/* ---------- Courts grid ---------- */
+.courts-main{padding:1.1rem 1.2rem 4rem}
+.courts-main h2{font-family:var(--font-display);font-size:1.02rem;margin:.2rem 0 1rem}
+.courts-grid{
+  display:grid;grid-template-columns:repeat(auto-fill, minmax(280px,1fr));
+  gap:1.1rem;
+}
+.court-card{
+  position:relative;background:var(--surface);border:1.5px solid var(--line);border-radius:var(--radius);
+  padding:0 1.05rem 1.05rem;box-shadow:var(--shadow-sm);
+  display:flex;flex-direction:column;min-height:236px;overflow:hidden;
+  transition:box-shadow .15s, transform .15s;
+}
+.court-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
+.court-card::before{
+  content:'';display:block;height:6px;margin:0 -1.05rem;background:var(--turf);
+}
+.court-card.playing::before{background:var(--clay)}
+.court-card.playing{border-color:var(--ink);background:#152420;color:#fff}
+
+.court-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding-top:.85rem}
+.court-name-wrap{display:flex;align-items:center;gap:.4rem;min-width:0}
+.court-name-wrap svg{width:14px;height:14px;color:var(--slate);flex-shrink:0}
+.court-card.playing .court-name-wrap svg{color:#7fa89c}
+.court-name{
+  font-family:var(--font-display);font-size:1rem;background:transparent;border:none;
+  color:inherit;max-width:100%;border-bottom:2px solid transparent;padding:1px 0;min-width:0;
+}
+.court-name:hover,.court-name:focus{border-bottom-color:var(--line)}
+.court-card.playing .court-name:hover,.court-card.playing .court-name:focus{border-bottom-color:rgba(255,255,255,.3)}
+.status-badge{
+  font-family:var(--font-mono);font-size:.65rem;font-weight:600;letter-spacing:.05em;
+  padding:.28rem .55rem;border-radius:99px;text-transform:uppercase;white-space:nowrap;flex-shrink:0;
+  display:inline-flex;align-items:center;gap:.3rem;
+}
+.status-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.status-badge.open{background:var(--turf-pale);color:var(--turf-deep)}
+.status-badge.playing{background:rgba(228,105,59,.18);color:#ffb595}
+
+/* --- Matchup: two team columns with a vs divider, tennis-net style --- */
+.matchup{
+  flex:1;display:flex;align-items:stretch;gap:0;margin:.9rem 0 .7rem;
+  position:relative;min-height:64px;
+}
+.matchup .team{flex:1;display:flex;flex-direction:column;gap:.4rem;justify-content:center;min-width:0}
+.matchup .team.team-b{align-items:flex-end;text-align:right}
+.matchup .vs-divider{
+  width:1px;background:repeating-linear-gradient(var(--line),var(--line) 4px,transparent 4px,transparent 9px);
+  margin:0 .8rem;position:relative;flex-shrink:0;
+}
+.court-card.playing .vs-divider{background:repeating-linear-gradient(rgba(255,255,255,.25),rgba(255,255,255,.25) 4px,transparent 4px,transparent 9px)}
+.vs-divider::after{
+  content:'VS';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  font-family:var(--font-mono);font-size:.62rem;font-weight:700;color:var(--slate);
+  background:var(--surface);padding:.15rem .3rem;border-radius:5px;letter-spacing:.05em;
+}
+.court-card.playing .vs-divider::after{background:#152420;color:#7fa89c}
+
+.player-col{display:flex;flex-direction:column;gap:1px;min-width:0}
+.player-row{display:flex;align-items:center;gap:.45rem;min-width:0}
+.team-b .player-row{flex-direction:row-reverse}
+.player-games-row{display:flex}
+.team-b .player-games-row{justify-content:flex-end}
+.avatar{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-weight:700;font-size:.68rem;color:#fff;
+}
+.player-name-txt{font-weight:700;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.win-chip{font-size:.68rem;flex-shrink:0;opacity:.85}
+.games-chip{
+  font-family:var(--font-mono);font-size:.6rem;font-weight:600;
+  color:var(--slate);flex-shrink:0;opacity:.85;
+}
+.empty-slot{font-size:.78rem;color:var(--slate);font-style:italic}
+.court-card.playing .empty-slot{color:#7fa89c}
+
+.last-result{
+  font-size:.72rem;color:var(--slate);padding:.4rem .6rem;background:var(--court);border-radius:8px;
+  margin-bottom:.6rem;display:flex;align-items:center;gap:.35rem;
+}
+.last-result svg{width:12px;height:12px;color:var(--clay);flex-shrink:0}
+
+.timer{
+  font-family:var(--font-mono);font-size:1.6rem;font-weight:600;letter-spacing:.02em;
+  text-align:center;margin-bottom:.7rem;
+}
+
+.court-cta{
+  margin-top:auto;width:100%;border:none;border-radius:var(--radius-sm);
+  padding:.7rem;font-weight:800;font-size:.88rem;cursor:pointer;letter-spacing:.01em;
+  transition:background .15s,opacity .15s,transform .1s;
+}
+.court-cta.call{background:var(--clay);color:#fff}
+.court-cta.call:hover:not(:disabled){background:var(--clay-deep)}
+.court-cta.call:disabled{background:var(--line);color:var(--slate);cursor:not-allowed}
+.court-cta.end{background:rgba(255,255,255,.12);color:#fff}
+.court-cta.end:hover{background:rgba(255,255,255,.22)}
+.court-cta:active:not(:disabled){transform:scale(.98)}
+
+.courts-empty{
+  padding:3rem 1rem;text-align:center;color:var(--slate);border:1.5px dashed var(--line);
+  border-radius:var(--radius);
+}
+
+/* ---------- History ---------- */
+.history{margin-top:1.6rem}
+.history summary{
+  cursor:pointer;font-weight:700;font-size:.85rem;color:var(--slate);
+  padding:.5rem 0;list-style:none;display:flex;align-items:center;gap:.4rem;
+}
+.history summary::-webkit-details-marker{display:none}
+.history summary svg{width:12px;height:12px;transition:transform .15s}
+.history[open] summary svg{transform:rotate(90deg)}
+.history-list{display:flex;flex-direction:column;gap:.4rem;padding:.3rem 0 0}
+.history-row{
+  display:flex;justify-content:space-between;gap:.6rem;font-size:.78rem;color:var(--slate);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);
+  padding:.5rem .7rem;
+}
+.history-row b{color:var(--ink)}
+
+/* ---------- Modals ---------- */
+.overlay{
+  position:fixed;inset:0;background:rgba(21,36,32,.5);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;padding:1rem;z-index:100;
+}
+.overlay[hidden]{display:none}
+.modal{
+  background:#fff;border-radius:16px;max-width:440px;width:100%;
+  max-height:88vh;overflow-y:auto;box-shadow:var(--shadow-md);
+  padding:1.4rem 1.4rem 1.2rem;
+}
+.modal h3{font-family:var(--font-display);font-size:1.1rem;margin:0 0 1rem}
+.field{margin-bottom:1rem}
+.field label{display:block;font-size:.78rem;font-weight:700;color:var(--slate);margin-bottom:.35rem;text-transform:uppercase;letter-spacing:.03em}
+.field input[type=text],.field select{
+  width:100%;border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.6rem .7rem;font-size:.9rem;background:var(--court);color:var(--ink);
+}
+.field input:focus,.field select:focus{border-color:var(--turf);background:#fff}
+.seg{display:flex;border:1.5px solid var(--line);border-radius:var(--radius-sm);overflow:hidden}
+.seg button{
+  flex:1;border:none;background:var(--court);padding:.6rem;font-weight:700;font-size:.85rem;
+  cursor:pointer;color:var(--slate);
+}
+.seg button.active{background:var(--turf);color:#fff}
+.stepper{display:flex;align-items:center;gap:.7rem}
+.stepper button{
+  width:36px;height:36px;border-radius:9px;border:1.5px solid var(--line);background:#fff;
+  font-size:1.1rem;font-weight:700;cursor:pointer;color:var(--ink);
+}
+.stepper button:hover{border-color:var(--turf);color:var(--turf-deep)}
+.stepper .n{font-family:var(--font-mono);font-weight:600;font-size:1.1rem;min-width:2ch;text-align:center}
+.court-name-rows{display:flex;flex-direction:column;gap:.4rem;margin-top:.6rem;max-height:180px;overflow-y:auto}
+.court-name-rows input{width:100%;border:1.5px solid var(--line);border-radius:8px;padding:.45rem .6rem;font-size:.82rem}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.3rem 0}
+.switch{position:relative;width:44px;height:25px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .track{position:absolute;inset:0;background:var(--line);border-radius:99px;transition:background .15s;cursor:pointer}
+.switch .track::before{content:'';position:absolute;width:19px;height:19px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch input:checked + .track{background:var(--turf)}
+.switch input:checked + .track::before{transform:translateX(19px)}
+.modal-actions{display:flex;gap:.6rem;margin-top:1.2rem;flex-wrap:wrap}
+.btn{border:none;border-radius:var(--radius-sm);padding:.65rem 1.1rem;font-weight:700;font-size:.85rem;cursor:pointer;transition:background .15s,opacity .15s}
+.btn.primary{background:var(--turf);color:#fff}
+.btn.primary:hover{background:var(--turf-deep)}
+.btn.ghost{background:var(--court);color:var(--ink)}
+.btn.ghost:hover{background:var(--line)}
+.btn.danger{background:var(--danger-pale);color:var(--danger)}
+.btn.danger:hover{background:var(--danger);color:#fff}
+.btn.warn{background:transparent;color:var(--clay-deep);border:1.5px solid var(--clay);}
+.btn.warn:hover{background:var(--clay);color:#fff}
+.btn.solid-turf{background:var(--turf);color:#fff}
+.btn.solid-turf:hover{background:var(--turf-deep)}
+.btn.sm{padding:.4rem .75rem;font-size:.76rem;flex-shrink:0}
+.divider{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
+.danger-zone h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--slate);margin:0 0 .5rem}
+.file-row{display:flex;gap:.5rem;flex-wrap:wrap}
+.field-head-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.35rem}
+
+/* ---------- Roster management (Settings) ---------- */
+.roster-manage-search input{
+  width:100%;border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.55rem .7rem;font-size:.82rem;background:var(--court);color:var(--ink);margin-bottom:.5rem;
+}
+.roster-manage-search input:focus{border-color:var(--turf);background:#fff}
+.roster-manage-list{
+  display:flex;flex-direction:column;gap:.2rem;max-height:190px;overflow-y:auto;
+  border:1.5px solid var(--line);border-radius:var(--radius-sm);padding:.35rem;
+}
+.roster-manage-row{display:flex;align-items:center;gap:.55rem;padding:.4rem .5rem;border-radius:7px}
+.roster-manage-row:hover{background:var(--court)}
+.roster-manage-row .rm-avatar{
+  width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-weight:700;font-size:.6rem;color:#fff;
+}
+.roster-manage-row .rm-name{flex:1;min-width:0;font-size:.85rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-pill.floor{background:var(--turf-pale);color:var(--turf-deep);flex-shrink:0}
+.roster-manage-row .rm-del{
+  border:none;background:none;color:var(--slate);cursor:pointer;
+  width:23px;height:23px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.roster-manage-row .rm-del:hover{background:var(--danger-pale);color:var(--danger)}
+.roster-manage-row .rm-del svg{width:12px;height:12px}
+.roster-manage-empty{padding:1.1rem .5rem;text-align:center;color:var(--slate);font-size:.8rem}
+
+/* ---------- Session banner (read-only / ended state) ----------
+   Styled like court-closure hazard tape — diagonal stripe edges framing
+   a plain notice, echoing how a real court gets physically closed off. */
+.session-banner{background:#FCEEE8}
+.session-banner::before,.session-banner::after{
+  content:'';display:block;height:7px;
+  background:repeating-linear-gradient(135deg, var(--clay) 0 10px, var(--clay-deep) 10px 20px);
+}
+.session-banner-inner{
+  max-width:1400px;margin:0 auto;padding:.65rem 1.1rem;
+  display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;
+}
+.session-banner .eyebrow{
+  font-family:var(--font-mono);font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--clay-deep);background:#fff;padding:.28rem .6rem;border-radius:99px;flex-shrink:0;
+  display:inline-flex;align-items:center;gap:.35rem;
+}
+.session-banner .eyebrow svg{width:12px;height:12px}
+.session-banner .msg{flex:1;min-width:220px;font-size:.82rem;font-weight:500;color:#7a3c22}
+body.session-locked .add-form{opacity:.55}
+body.session-locked .add-form input,body.session-locked .add-form button{cursor:not-allowed}
+body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,body.session-locked .paddle .drag-handle{
+  opacity:.35;pointer-events:none;
+}
+.endgame-row .choice button:disabled{opacity:.4;cursor:not-allowed}
+.endgame-row .choice button:disabled:hover{background:#fff;border-color:var(--line);color:var(--slate)}
+
+.endgame-list{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.4rem}
+.endgame-row{display:flex;align-items:center;justify-content:space-between;gap:.6rem;padding:.55rem .7rem;border:1.5px solid var(--line);border-radius:var(--radius-sm)}
+.endgame-row .who{font-weight:700;font-size:.88rem}
+.endgame-row .choice{display:flex;gap:.3rem}
+.endgame-row .choice button{
+  border:1.5px solid var(--line);background:#fff;border-radius:7px;padding:.3rem .55rem;font-size:.72rem;font-weight:700;cursor:pointer;color:var(--slate);
+}
+.endgame-row .choice button.sel-requeue.active{background:var(--turf-pale);border-color:var(--turf);color:var(--turf-deep)}
+.endgame-row .choice button.sel-done.active{background:var(--danger-pale);border-color:var(--danger);color:var(--danger)}
+
+.winner-pick{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:1.1rem}
+.winner-card{
+  border:2px solid var(--line);border-radius:var(--radius-sm);background:var(--court);
+  padding:.7rem .6rem;cursor:pointer;text-align:center;transition:border-color .15s,background .15s;
+}
+.winner-card:hover{border-color:var(--turf)}
+.winner-card.selected{border-color:var(--clay);background:#FCEEE8}
+.winner-card .trophy{font-size:1.1rem;display:block;margin-bottom:.3rem;opacity:.35}
+.winner-card.selected .trophy{opacity:1}
+.winner-card .team-label{font-family:var(--font-mono);font-size:.62rem;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.2rem}
+.winner-card .team-names{font-weight:700;font-size:.85rem;line-height:1.3;margin-bottom:.55rem}
+.winner-card .score-input{
+  width:100%;max-width:64px;margin:0 auto;display:block;text-align:center;
+  border:1.5px solid var(--line);border-radius:var(--radius-sm);background:#fff;
+  font-family:var(--font-mono);font-weight:700;font-size:1.05rem;color:var(--ink);
+  padding:.3rem .2rem;cursor:text;
+}
+.winner-card .score-input:focus{border-color:var(--clay);outline:none}
+.winner-card.selected .score-input{border-color:var(--clay)}
+.winner-note{font-size:.75rem;color:var(--slate);text-align:center;margin:-.6rem 0 1rem}
+.section-label{font-size:.78rem;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.03em;margin:0 0 .5rem}
+
+.rankings-list{display:flex;flex-direction:column;gap:.4rem}
+.rank-row{
+  display:flex;align-items:center;gap:.7rem;
+  border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.55rem .7rem;
+}
+.rank-row .rank-num{
+  font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--slate);
+  width:22px;text-align:center;flex-shrink:0;
+}
+.rank-row.top1 .rank-num{color:#B4870B}
+.rank-row.top2 .rank-num{color:#8A8F92}
+.rank-row.top3 .rank-num{color:#B4712F}
+.rank-row .rank-name{flex:1;min-width:0;font-weight:700;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rank-row .rank-games{font-family:var(--font-mono);font-size:.7rem;color:var(--slate);flex-shrink:0;white-space:nowrap}
+.rank-row .rank-record{font-family:var(--font-mono);font-size:.78rem;color:var(--slate);flex-shrink:0}
+.rank-row .rank-pct{
+  font-family:var(--font-mono);font-weight:700;font-size:.78rem;color:var(--turf-deep);
+  background:var(--turf-pale);padding:.1rem .5rem;border-radius:99px;flex-shrink:0;min-width:3.4em;text-align:center;
+}
+.rankings-empty{
+  text-align:center;color:var(--slate);padding:2rem 1rem;font-size:.85rem;
+  border:1.5px dashed var(--line);border-radius:var(--radius);
+}
+
+/* ---------- Toasts ---------- */
+.toast-wrap{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:.5rem;align-items:center;width:100%;pointer-events:none}
+.toast{
+  background:var(--ink);color:#fff;padding:.6rem 1rem;border-radius:99px;font-size:.82rem;font-weight:600;
+  box-shadow:var(--shadow-md);opacity:0;transform:translateY(10px);transition:opacity .2s,transform .2s;
+  max-width:90vw;
+}
+.toast.show{opacity:1;transform:translateY(0)}
+
+/* ---------- Mobile ---------- */
+.mobile-tabs{display:none}
+@media (max-width:880px){
+  .app-shell{grid-template-columns:1fr;padding-bottom:64px}
+  .stack-rail{
+    position:static;height:auto;min-height:0;border-right:none;border-bottom:1px solid var(--line);
+    display:none;
+  }
+  .app-shell.show-stack .stack-rail{display:flex}
+  .app-shell.show-courts .courts-main{display:block}
+  .app-shell.show-stack .courts-main{display:none}
+  .app-shell.show-courts .stack-rail{display:none}
+  .stack-list{max-height:60vh}
+  .mobile-tabs{
+    display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--ink);z-index:50;
+    box-shadow:0 -2px 10px rgba(0,0,0,.15);padding-bottom:env(safe-area-inset-bottom);
+  }
+  .mobile-tabs button{
+    flex:1;border:none;background:none;color:#8fada2;padding:.75rem;font-weight:700;font-size:.8rem;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:.2rem;
+  }
+  .mobile-tabs button.active{color:#fff}
+  .mobile-tabs button svg{width:18px;height:18px}
+  .topbar .session-name{max-width:32vw}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none !important;animation:none !important}
+}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-paddle" viewBox="0 0 20 28"><path fill="currentColor" d="M10 0c4.4 0 7 3 7 7.2 0 4.6-3 8-7 8s-7-3.4-7-8C3 3 5.6 0 10 0Z"/><rect fill="currentColor" x="8.2" y="14.6" width="3.6" height="12.4" rx="1.6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path fill="currentColor" d="M19.4 13a7.4 7.4 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L14.9 3H9.1l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4L4.6 11a7.4 7.4 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.75 1.7 1l.4 2.6h5.8l.4-2.6c.6-.25 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path fill="currentColor" d="M12 6l7 8H5z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path fill="currentColor" d="M12 18l-7-8h14z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6L19 6.4 17.6 5 12 10.6z"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><path fill="currentColor" d="M9 6a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3ZM9 13.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3ZM9 21a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm6 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="currentColor" d="M9 6l6 6-6 6z"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 2 7l10 5 10-5zM2 12l10 5 10-5M2 17l10 5 10-5"/></symbol>
+  <symbol id="i-court" viewBox="0 0 24 24"><path fill="currentColor" d="M3 4h18v16H3zm9 0v16M3 12h18" stroke="currentColor" stroke-width="1.6" fill="none"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path fill="currentColor" d="M6 3h12v2h2.5v2c0 2.3-1.7 4.2-4 4.5-.7 1.6-2.1 2.8-3.8 3.2V18h3v2H8v-2h3v-3.3c-1.7-.4-3.1-1.6-3.8-3.2-2.3-.3-4-2.2-4-4.5V5H6V3Zm0 4H3.9c.2 1.1.9 2 2.1 2.3V7Zm12 0v2.3c1.2-.3 1.9-1.2 2.1-2.3H18Z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5V1L7 6l5 5V7c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6H4c0 4.4 3.6 8 8 8s8-3.6 8-8-3.6-8-8-8Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 12H8L7 9Zm3 2v8h1v-8h-1Zm3 0v8h1v-8h-1Z"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="logo">
+    <svg viewBox="0 0 20 28"><use href="#i-paddle"/></svg>
+  </div>
+  <input id="sessionNameInput" class="session-name" value="Open Play" aria-label="Session name" maxlength="40">
+  <div class="spacer"></div>
+  <span class="pill" id="stackCountPill">0 in stack</span>
+  <button class="icon-btn" id="rankingsBtn" aria-label="Rankings"><svg viewBox="0 0 24 24"><use href="#i-trophy"/></svg></button>
+  <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24"><use href="#i-gear"/></svg></button>
+</header>
+
+<div class="session-banner" id="sessionBanner" hidden>
+  <div class="session-banner-inner">
+    <span class="eyebrow"><svg viewBox="0 0 24 24"><use href="#i-lock"/></svg>Session ended</span>
+    <span class="msg">The stack and courts are locked for new games. History and rankings stay open for review.</span>
+    <button type="button" class="btn solid-turf sm" id="resumeSessionBtn"><svg viewBox="0 0 24 24" style="width:12px;height:12px;vertical-align:-2px"><use href="#i-play"/></svg> Resume session</button>
+  </div>
+</div>
+
+<div class="app-shell show-stack" id="appShell">
+  <aside class="stack-rail">
+    <div class="panel-head">
+      <h2>The Stack</h2>
+      <span class="count-badge" id="stackBadge">0</span>
+    </div>
+    <form class="add-form" id="addForm">
+      <input id="addNameInput" type="text" placeholder="Player name (or names, comma-separated)" autocomplete="off" list="rosterList">
+      <datalist id="rosterList"></datalist>
+      <button type="submit" aria-label="Add player"><svg viewBox="0 0 24 24" style="width:16px;height:16px;vertical-align:-3px"><use href="#i-plus"/></svg> Add</button>
+    </form>
+    <p class="add-hint" id="addHint">Add players here, then check them in when they arrive to join the stack.</p>
+
+    <div class="arrivals-panel" id="arrivalsPanel" hidden>
+      <div class="arrivals-head">
+        <span class="arrivals-title">Waiting to check in</span>
+        <span class="count-badge" id="arrivalsBadge">0</span>
+        <button type="button" class="checkin-all-btn" id="checkInAllBtn">Check in all</button>
+      </div>
+      <div class="arrivals-list" id="arrivalsList"></div>
+    </div>
+
+    <div class="quick-add-panel" id="quickAddPanel" hidden>
+      <div class="quick-add-head">
+        <span class="quick-add-title">Quick add saved players</span>
+        <button type="button" class="quick-add-all-btn" id="quickAddAllBtn">+ Add all</button>
+      </div>
+      <div class="quick-add-chips" id="quickAddChips"></div>
+    </div>
+
+    <div class="blocks-panel" id="blocksPanel" hidden>
+      <div class="blocks-panel-title">⏳ Accumulating blocks</div>
+      <div class="block-group">
+        <div class="block-head">
+          <span class="block-head-label">🏆 Winners block</span>
+          <span class="block-head-count" id="winnersBlockCount">0/4</span>
+          <button type="button" class="block-flush-btn" data-block="winners" aria-label="Move winners block to queue now">Queue now</button>
+        </div>
+        <div class="block-list" id="winnersBlockList"></div>
+      </div>
+      <div class="block-group">
+        <div class="block-head">
+          <span class="block-head-label">💀 Losers block</span>
+          <span class="block-head-count" id="losersBlockCount">0/4</span>
+          <button type="button" class="block-flush-btn" data-block="losers" aria-label="Move losers block to queue now">Queue now</button>
+        </div>
+        <div class="block-list" id="losersBlockList"></div>
+      </div>
+    </div>
+
+    <div class="stack-list" id="stackList" aria-live="polite"></div>
+  </aside>
+
+  <main class="courts-main">
+    <h2>Courts</h2>
+    <div class="courts-grid" id="courtsGrid"></div>
+    <details class="history">
+      <summary><svg viewBox="0 0 24 24"><use href="#i-chev"/></svg> Recent games</summary>
+      <div class="history-list" id="historyList"></div>
+    </details>
+  </main>
+</div>
+
+<nav class="mobile-tabs">
+  <button id="tabStack" class="active"><svg viewBox="0 0 24 24"><use href="#i-stack"/></svg>Stack</button>
+  <button id="tabCourts"><svg viewBox="0 0 24 24"><use href="#i-court"/></svg>Courts</button>
+</nav>
+
+<!-- Settings modal -->
+<div class="overlay" id="settingsOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Settings">
+    <h3>Settings</h3>
+    <div class="field">
+      <label for="settingsSessionName">Session name</label>
+      <input type="text" id="settingsSessionName" maxlength="40">
+    </div>
+    <div class="field">
+      <label>Game format (applies to all courts)</label>
+      <div class="seg" id="gameSizeSeg">
+        <button type="button" data-size="4" class="active">Doubles · 4</button>
+        <button type="button" data-size="2">Singles · 2</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Number of courts</label>
+      <div class="stepper">
+        <button type="button" id="courtMinus" aria-label="Fewer courts">–</button>
+        <span class="n" id="courtCountNum">4</span>
+        <button type="button" id="courtPlus" aria-label="More courts">+</button>
+      </div>
+      <div class="court-name-rows" id="courtNameRows"></div>
+    </div>
+    <div class="field toggle-row">
+      <label style="margin:0">Sound on call-up</label>
+      <label class="switch">
+        <input type="checkbox" id="soundToggle" checked>
+        <span class="track"></span>
+      </label>
+    </div>
+    <hr class="divider">
+    <div class="field">
+      <div class="field-head-row">
+        <label style="margin:0">Known players</label>
+        <span class="count-badge" id="rosterManageCount">0</span>
+      </div>
+      <div class="roster-manage-search"><input type="text" id="rosterSearchInput" placeholder="Filter saved names…"></div>
+      <div class="roster-manage-list" id="rosterManageList"></div>
+      <p class="add-hint" style="padding:0;margin-top:.45rem">Remove a name here to stop it appearing in quick-add suggestions and in "keep player names" — it won't touch anyone currently on the floor.</p>
+    </div>
+    <hr class="divider">
+    <div class="field">
+      <label>Backup</label>
+      <div class="file-row">
+        <button class="btn ghost" id="exportBtn">Export JSON</button>
+        <button class="btn ghost" id="importBtn">Import JSON</button>
+        <input type="file" id="importFile" accept="application/json" hidden>
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="danger-zone">
+      <h4>Session controls</h4>
+      <button class="btn warn" id="endSessionBtn" style="width:100%;margin-bottom:.5rem"><svg viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px;margin-right:.35rem"><use href="#i-lock"/></svg>End session (keep all records)</button>
+      <button class="btn ghost" id="newSessionBtn" style="width:100%;margin-bottom:.5rem"><svg viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px;margin-right:.35rem"><use href="#i-restart"/></svg>Start new session (keep player names)</button>
+      <button class="btn danger" id="resetBtn" style="width:100%"><svg viewBox="0 0 24 24" style="width:13px;height:13px;vertical-align:-2px;margin-right:.35rem"><use href="#i-trash"/></svg>Erase everything (players too)</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" id="settingsDone">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rankings modal -->
+<div class="overlay" id="rankingsOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Rankings">
+    <h3>🏆 Rankings</h3>
+    <p class="winner-note" style="margin:-.3rem 0 .8rem">Games played · win–loss record · win rate.</p>
+    <div class="rankings-list" id="rankingsList"></div>
+    <div class="modal-actions">
+      <button class="btn primary" id="rankingsDone">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- End game modal -->
+<div class="overlay" id="endgameOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-label="End game">
+    <h3 id="endgameTitle">End game</h3>
+    <p class="section-label">Score (optional)</p>
+    <div class="winner-pick" id="winnerPick"></div>
+    <p class="winner-note">Enter both scores to auto-pick the winner, tap a side to pick manually, or leave blank to skip.</p>
+    <p class="section-label">Back to the stack?</p>
+    <p class="section-label" id="endgameLockNote" style="color:var(--clay-deep);display:none">🔒 Session ended — everyone will be marked "Done for today" instead of requeued.</p>
+    <div class="endgame-list" id="endgameList"></div>
+    <div class="modal-actions">
+      <button class="btn primary" id="endgameConfirm">Confirm &amp; clear court</button>
+      <button class="btn ghost" id="endgameCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ================= IndexedDB layer (with localStorage fallback) ================= */
+const DB_NAME = 'paddleStackQueueDB';
+const STORE = 'kv';
+let idb = null;
+let idbFailed = false;
+
+function openDB(){
+  return new Promise((resolve) => {
+    if (!('indexedDB' in window)) { idbFailed = true; return resolve(null); }
+    try{
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => { idbFailed = true; resolve(null); };
+    }catch(e){ idbFailed = true; resolve(null); }
+  });
+}
+
+async function idbGet(key){
+  if (idbFailed || !idb) return null;
+  return new Promise((resolve) => {
+    try{
+      const tx = idb.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    }catch(e){ resolve(null); }
+  });
+}
+
+async function idbSet(key, value){
+  if (idbFailed || !idb) return false;
+  return new Promise((resolve) => {
+    try{
+      const tx = idb.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(value, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    }catch(e){ resolve(false); }
+  });
+}
+
+async function persist(){
+  const ok = await idbSet('state', state);
+  if (!ok){
+    try{ localStorage.setItem('paddleStackQueueState', JSON.stringify(state)); }catch(e){}
+  }
+}
+
+async function loadPersisted(){
+  let saved = await idbGet('state');
+  if (!saved){
+    try{
+      const raw = localStorage.getItem('paddleStackQueueState');
+      if (raw) saved = JSON.parse(raw);
+    }catch(e){}
+  }
+  return saved;
+}
+
+/* ================= State ================= */
+function defaultCourts(n){
+  return Array.from({length:n}, (_, i) => ({
+    id: 'c'+(i+1), name: 'Court '+(i+1), status:'open', players: [], startTime: null, lastResult: null
+  }));
+}
+
+let state = {
+  session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active' }, // status: 'active' | 'ended'
+  courts: defaultCourts(4),
+  arrivals: [],        // {id, name, addedAt} — added but not yet checked in; not part of the live queue
+  stack: [],           // {id, name, joinedAt, tag: 'new'|'queued'}
+  winnersBlock: [],     // {id, name, joinedAt, tag} — accumulates until gameSize, then flushes to stack as a group
+  losersBlock: [],      // same shape — accumulates until gameSize, then flushes to stack as a group
+  history: [],          // {id, courtName, teamA, teamB, winner, startTime, endTime}
+  playerStats: {},      // name -> {wins, games}
+  roster: []             // known player names, kept across "new session" resets for quick re-adding
+};
+
+let uid = 1;
+function nextId(prefix){ return prefix + (Date.now().toString(36)) + (uid++); }
+
+/* ================= DOM refs ================= */
+const $ = (sel) => document.querySelector(sel);
+const sessionNameInput = $('#sessionNameInput');
+const stackList = $('#stackList');
+const stackBadge = $('#stackBadge');
+const stackCountPill = $('#stackCountPill');
+const blocksPanel = $('#blocksPanel');
+const winnersBlockList = $('#winnersBlockList');
+const losersBlockList = $('#losersBlockList');
+const winnersBlockCount = $('#winnersBlockCount');
+const losersBlockCount = $('#losersBlockCount');
+const addForm = $('#addForm');
+const addNameInput = $('#addNameInput');
+const courtsGrid = $('#courtsGrid');
+const historyList = $('#historyList');
+const toastWrap = $('#toastWrap');
+const appShell = $('#appShell');
+const sessionBanner = $('#sessionBanner');
+const resumeSessionBtn = $('#resumeSessionBtn');
+const addHintEl = $('#addHint');
+
+/* ================= Toasts ================= */
+function toast(msg){
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  toastWrap.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 2200);
+}
+
+/* ================= Sound ================= */
+let audioCtx = null;
+function ping(){
+  if (!state.session.soundOn) return;
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 740;
+    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.18, audioCtx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.32);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.33);
+  }catch(e){}
+}
+
+/* ================= Render: Stack ================= */
+// Escapes for both text-node and attribute-value contexts. The previous
+// textContent->innerHTML trick never escaped quote characters, so a player
+// name containing a `"` could break out of attributes like value="..." or
+// aria-label="..." and inject markup. This escapes everything that matters.
+function esc(s){
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+const AVATAR_COLORS = ['#2F6F5E','#E4693B','#3B6EA5','#8A5FBE','#B4483E','#4E8C7A','#C68A2E','#5A7A9C'];
+function avatarColor(name){
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function initials(name){
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0]||'') + (parts[1]?.[0]||'')).toUpperCase() || '?';
+}
+function getStats(name){
+  if (!state.playerStats[name]) state.playerStats[name] = { wins: 0, games: 0 };
+  return state.playerStats[name];
+}
+function gamesChipHtml(games){
+  const label = games === 1 ? 'GAME PLAYED' : 'GAMES PLAYED';
+  return `<span class="games-chip" title="${games} ${games === 1 ? 'game' : 'games'} played this session">${games} ${label}</span>`;
+}
+
+/* ================= Session lock (End session / Resume) ================= */
+function isSessionEnded(){ return state.session.status === 'ended'; }
+
+function applySessionLockUI(){
+  const ended = isSessionEnded();
+  document.body.classList.toggle('session-locked', ended);
+  sessionBanner.hidden = !ended;
+  addNameInput.disabled = ended;
+  const addBtn = addForm.querySelector('button[type="submit"]');
+  if (addBtn) addBtn.disabled = ended;
+  if (addHintEl){
+    addHintEl.textContent = ended
+      ? 'Session ended — the stack is locked. Resume the session to keep adding players.'
+      : 'Add players in the order they arrive. First in, first up.';
+  }
+  updateEndSessionBtn();
+}
+
+function updateEndSessionBtn(){
+  const btn = $('#endSessionBtn');
+  if (!btn) return;
+  const iconStyle = 'width:13px;height:13px;vertical-align:-2px;margin-right:.35rem';
+  if (isSessionEnded()){
+    btn.innerHTML = `<svg viewBox="0 0 24 24" style="${iconStyle}"><use href="#i-play"/></svg>Resume session`;
+    btn.classList.remove('warn'); btn.classList.add('solid-turf');
+  } else {
+    btn.innerHTML = `<svg viewBox="0 0 24 24" style="${iconStyle}"><use href="#i-lock"/></svg>End session (keep all records)`;
+    btn.classList.remove('solid-turf'); btn.classList.add('warn');
+  }
+}
+
+function endSession(){
+  if (!confirm('End this session? No new matches can be started and the stack will be locked, but the stack, courts, history and rankings all stay exactly as they are for review. You can resume anytime.')) return;
+  state.session.status = 'ended';
+  persist();
+  applySessionLockUI();
+  renderAll();
+  settingsOverlay.hidden = true;
+  toast('Session ended — all records kept for review');
+}
+function resumeSession(){
+  state.session.status = 'active';
+  persist();
+  applySessionLockUI();
+  renderAll();
+  toast('Session resumed');
+}
+
+function renderStack(){
+  stackBadge.textContent = state.stack.length;
+  stackCountPill.textContent = state.stack.length + ' in stack';
+  stackList.innerHTML = '';
+  if (state.stack.length === 0){
+    stackList.innerHTML = '<div class="stack-empty">The stack is empty.<br>Add a player above to get the queue going.</div>';
+    return;
+  }
+  const gameSize = state.session.gameSize;
+  state.stack.forEach((entry, idx) => {
+    const row = document.createElement('div');
+    row.className = 'paddle' + (idx < gameSize ? ' next-up' : '');
+    row.draggable = false;
+    row.dataset.id = entry.id;
+    const stats = state.playerStats[entry.name];
+    const winChip = (stats && stats.wins > 0) ? `<span class="win-chip">🏆${stats.wins}</span>` : '';
+    const games = stats ? (stats.games || 0) : 0;
+    const gamesChip = gamesChipHtml(games);
+    const tag = entry.tag === 'queued' ? '<span class="tag-pill queued">Queued</span>' : '<span class="tag-pill new">New</span>';
+    row.innerHTML = `
+      <span class="drag-handle" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-grip"/></svg></span>
+      <span class="pos">${idx+1}</span>
+      <svg class="glyph" viewBox="0 0 20 28"><use href="#i-paddle"/></svg>
+      <span class="name-col">
+        <span class="name">${esc(entry.name)}${winChip}</span>
+        <span class="sub-row">${tag}${gamesChip}</span>
+      </span>
+      <span class="reorder">
+        <button type="button" data-act="up" aria-label="Move up"><svg viewBox="0 0 24 24"><use href="#i-up"/></svg></button>
+        <button type="button" data-act="down" aria-label="Move down"><svg viewBox="0 0 24 24"><use href="#i-down"/></svg></button>
+      </span>
+      <button type="button" class="remove-btn" data-act="remove" aria-label="Remove ${esc(entry.name)}"><svg viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+    `;
+    stackList.appendChild(row);
+    attachDrag(row);
+  });
+}
+
+/* ================= Accumulating blocks (winners vs winners, losers vs losers) ================= */
+function blockListHtml(block){
+  if (block.length === 0) return '<div class="block-empty">Empty — waiting for a result.</div>';
+  return block.map((entry, idx) => `
+    <div class="block-item" data-id="${entry.id}">
+      <span class="block-item-pos">${idx+1}</span>
+      <span class="block-item-name">${esc(entry.name)}</span>
+    </div>
+  `).join('');
+}
+
+function renderBlocks(){
+  const gameSize = state.session.gameSize;
+  const hasAny = state.winnersBlock.length > 0 || state.losersBlock.length > 0;
+  blocksPanel.hidden = !hasAny;
+  if (!hasAny) return;
+
+  winnersBlockCount.textContent = state.winnersBlock.length + '/' + gameSize;
+  losersBlockCount.textContent = state.losersBlock.length + '/' + gameSize;
+  winnersBlockList.innerHTML = blockListHtml(state.winnersBlock);
+  losersBlockList.innerHTML = blockListHtml(state.losersBlock);
+
+  blocksPanel.querySelector('[data-block="winners"]').disabled = state.winnersBlock.length === 0 || isSessionEnded();
+  blocksPanel.querySelector('[data-block="losers"]').disabled = state.losersBlock.length === 0 || isSessionEnded();
+}
+
+// Moves an entire block into the main queue, in order, as an intact group —
+// this is what makes callNext() pull "winners vs winners" or "losers vs losers".
+function flushBlockToQueue(blockKey){
+  const block = state[blockKey];
+  if (block.length === 0) return;
+  block.forEach(entry => state.stack.push(entry));
+  state[blockKey] = [];
+}
+
+// Auto-flush any block once it reaches gameSize players.
+function checkBlockFlush(){
+  const gameSize = state.session.gameSize;
+  if (state.winnersBlock.length >= gameSize) flushBlockToQueue('winnersBlock');
+  if (state.losersBlock.length >= gameSize) flushBlockToQueue('losersBlock');
+}
+
+blocksPanel.addEventListener('click', (e) => {
+  if (isSessionEnded()) return;
+  const btn = e.target.closest('button[data-block]');
+  if (!btn || btn.disabled) return;
+  const key = btn.dataset.block === 'winners' ? 'winnersBlock' : 'losersBlock';
+  const label = btn.dataset.block === 'winners' ? 'Winners block' : 'Losers block';
+  flushBlockToQueue(key);
+  toast(label + ' moved to queue');
+  renderAll(); persist();
+});
+
+stackList.addEventListener('click', (e) => {
+  if (isSessionEnded()) return;
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const row = btn.closest('.paddle');
+  const id = row.dataset.id;
+  const idx = state.stack.findIndex(p => p.id === id);
+  if (idx === -1) return;
+  const act = btn.dataset.act;
+  if (act === 'remove'){
+    const entry = state.stack[idx];
+    if (!confirm('Remove ' + entry.name + ' from the stack?')) return;
+    const [removed] = state.stack.splice(idx, 1);
+    toast(removed.name + ' removed from stack');
+  } else if (act === 'up' && idx > 0){
+    [state.stack[idx-1], state.stack[idx]] = [state.stack[idx], state.stack[idx-1]];
+  } else if (act === 'down' && idx < state.stack.length - 1){
+    [state.stack[idx+1], state.stack[idx]] = [state.stack[idx], state.stack[idx+1]];
+  }
+  renderAll(); persist();
+});
+
+/* ---- Pointer-based drag reorder (works for mouse, touch, pen) ---- */
+function attachDrag(row){
+  let startY = 0, dragging = false, placeholder = null;
+  const handle = row.querySelector('.drag-handle');
+  handle.addEventListener('pointerdown', (e) => {
+    if (isSessionEnded()) return;
+    e.preventDefault();
+    dragging = true;
+    startY = e.clientY;
+    row.classList.add('dragging');
+    row.setPointerCapture(e.pointerId);
+    row.style.position = 'relative';
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    row.style.transform = `translateY(${dy}px)`;
+    row.style.zIndex = 10;
+    const siblings = [...stackList.children];
+    const myIdx = siblings.indexOf(row);
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const targetRow = target && target.closest ? target.closest('.paddle') : null;
+    if (targetRow && targetRow !== row){
+      const targetIdx = siblings.indexOf(targetRow);
+      if (targetIdx !== -1 && targetIdx !== myIdx){
+        const id = row.dataset.id;
+        const fromIdx = state.stack.findIndex(p => p.id === id);
+        const toIdx = state.stack.findIndex(p => p.id === targetRow.dataset.id);
+        if (fromIdx !== -1 && toIdx !== -1){
+          const [moved] = state.stack.splice(fromIdx, 1);
+          state.stack.splice(toIdx, 0, moved);
+          renderAll(); persist();
+          startY = e.clientY;
+        }
+      }
+    }
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    row.classList.remove('dragging');
+    row.style.transform = '';
+    row.style.zIndex = '';
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+/* ================= Add players ================= */
+function registerRoster(name){
+  const exists = state.roster.some(r => r.toLowerCase() === name.toLowerCase());
+  if (!exists) state.roster.push(name);
+}
+function renderRosterList(){
+  const rosterList = $('#rosterList');
+  if (!rosterList) return;
+  rosterList.innerHTML = state.roster.slice().sort((a,b) => a.localeCompare(b))
+    .map(name => `<option value="${esc(name)}"></option>`).join('');
+}
+
+/* ---- Manage / delete saved roster names (Settings) ---- */
+// Fixes the bug where names removed from the stack lingered forever in the
+// "keep player names" list with no way to actually delete them.
+function removeFromRoster(name){
+  const idx = state.roster.findIndex(r => r.toLowerCase() === name.toLowerCase());
+  if (idx === -1) return;
+  state.roster.splice(idx, 1);
+  renderRosterList();
+  renderRosterManageList($('#rosterSearchInput') ? $('#rosterSearchInput').value : '');
+  persist();
+}
+function renderRosterManageList(filter){
+  const list = $('#rosterManageList');
+  if (!list) return;
+  const countBadge = $('#rosterManageCount');
+  if (countBadge) countBadge.textContent = state.roster.length;
+  const q = (filter || '').trim().toLowerCase();
+  const names = state.roster.slice().sort((a,b) => a.localeCompare(b))
+    .filter(n => !q || n.toLowerCase().includes(q));
+  if (names.length === 0){
+    list.innerHTML = `<div class="roster-manage-empty">${state.roster.length === 0 ? 'No saved players yet — add someone to the stack to get started.' : 'No names match that filter.'}</div>`;
+    return;
+  }
+  list.innerHTML = names.map(name => {
+    const lower = name.toLowerCase();
+    const waiting = state.arrivals.some(a => a.name.toLowerCase() === lower);
+    const statusTag = waiting
+      ? '<span class="tag-pill queued" title="Added but not checked in yet">Waiting to check in</span>'
+      : (isNameActive(name) ? '<span class="tag-pill floor" title="Currently on the floor">On floor</span>' : '');
+    return `
+    <div class="roster-manage-row">
+      <span class="rm-avatar" style="background:${avatarColor(name)}">${initials(name)}</span>
+      <span class="rm-name">${esc(name)}</span>
+      ${statusTag}
+      <button type="button" class="rm-del" data-name="${esc(name)}" aria-label="Remove ${esc(name)} from saved players"><svg viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+    </div>
+  `;
+  }).join('');
+}
+const rosterManageListEl = $('#rosterManageList');
+if (rosterManageListEl){
+  rosterManageListEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-name]');
+    if (!btn) return;
+    const name = btn.dataset.name;
+    if (!confirm('Remove "' + name + '" from your saved player list? This just clears the suggestion — it won\'t affect history or rankings.')) return;
+    removeFromRoster(name);
+    toast(name + ' removed from saved players');
+  });
+}
+const rosterSearchInputEl = $('#rosterSearchInput');
+if (rosterSearchInputEl){
+  rosterSearchInputEl.addEventListener('input', (e) => renderRosterManageList(e.target.value));
+}
+function isNameActive(name){
+  const lower = name.toLowerCase();
+  if (state.arrivals.some(p => p.name.toLowerCase() === lower)) return true;
+  if (state.stack.some(p => p.name.toLowerCase() === lower)) return true;
+  if (state.winnersBlock.some(p => p.name.toLowerCase() === lower)) return true;
+  if (state.losersBlock.some(p => p.name.toLowerCase() === lower)) return true;
+  if (state.courts.some(c => c.players.some(n => n.toLowerCase() === lower))) return true;
+  return false;
+}
+/* Players land here first (added, but not yet on the floor). They only join the
+   live stack once someone checks them in as arrived — see checkInArrival(s) below. */
+function addNamesToArrivals(names){
+  const added = [];
+  const skipped = [];
+  names.forEach(name => {
+    if (isNameActive(name)){
+      skipped.push(name);
+      return;
+    }
+    state.arrivals.push({ id: nextId('a'), name, addedAt: Date.now() });
+    registerRoster(name);
+    added.push(name);
+  });
+  if (added.length){
+    toast((added.length > 1 ? added.length + ' players' : added[0]) + ' added — check in when they arrive');
+  }
+  if (skipped.length){
+    toast(skipped.join(', ') + (skipped.length > 1 ? ' are' : ' is') + ' already waiting, in the stack, a block, or on a court');
+  }
+  renderRosterList();
+  renderAll(); persist();
+}
+addForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (isSessionEnded()){ toast('Session has ended — resume it to add players'); return; }
+  const raw = addNameInput.value.trim();
+  if (!raw) return;
+  const names = raw.split(',').map(s => s.trim()).filter(Boolean);
+  addNameInput.value = '';
+  addNamesToArrivals(names);
+});
+
+/* ---- Check-in: moves a waiting arrival into the live stack ---- */
+function checkInArrival(id){
+  const idx = state.arrivals.findIndex(a => a.id === id);
+  if (idx === -1) return;
+  const entry = state.arrivals[idx];
+  state.arrivals.splice(idx, 1);
+  state.stack.push({ id: nextId('p'), name: entry.name, joinedAt: Date.now(), tag: 'new' });
+  toast(entry.name + ' checked in and added to the stack');
+  renderAll(); persist();
+}
+function checkInAllArrivals(){
+  if (state.arrivals.length === 0) return;
+  const names = state.arrivals.map(a => a.name);
+  state.arrivals.forEach(entry => {
+    state.stack.push({ id: nextId('p'), name: entry.name, joinedAt: Date.now(), tag: 'new' });
+  });
+  state.arrivals = [];
+  toast((names.length > 1 ? names.length + ' players' : names[0]) + ' checked in and added to the stack');
+  renderAll(); persist();
+}
+function removeArrival(id){
+  const idx = state.arrivals.findIndex(a => a.id === id);
+  if (idx === -1) return;
+  const name = state.arrivals[idx].name;
+  state.arrivals.splice(idx, 1);
+  toast(name + ' removed');
+  renderAll(); persist();
+}
+function renderArrivals(){
+  const panel = $('#arrivalsPanel');
+  const badge = $('#arrivalsBadge');
+  const listEl = $('#arrivalsList');
+  const allBtn = $('#checkInAllBtn');
+  if (!panel || !listEl) return;
+  if (badge) badge.textContent = state.arrivals.length;
+  panel.hidden = state.arrivals.length === 0;
+  if (allBtn) allBtn.disabled = state.arrivals.length === 0 || isSessionEnded();
+  listEl.innerHTML = state.arrivals.map(entry => `
+    <div class="arrival-row" data-id="${entry.id}">
+      <span class="arrival-name">${esc(entry.name)}</span>
+      <button type="button" class="arrival-checkin-btn" data-act="checkin" data-id="${entry.id}">Check in</button>
+      <button type="button" class="arrival-remove-btn" data-act="remove" data-id="${entry.id}" aria-label="Remove ${esc(entry.name)}"><svg viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+    </div>
+  `).join('');
+}
+const arrivalsListEl = $('#arrivalsList');
+if (arrivalsListEl){
+  arrivalsListEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    if (isSessionEnded()){ toast('Session has ended — resume it to check players in'); return; }
+    const id = btn.dataset.id;
+    if (btn.dataset.act === 'checkin') checkInArrival(id);
+    else if (btn.dataset.act === 'remove') removeArrival(id);
+  });
+}
+const checkInAllBtnEl = $('#checkInAllBtn');
+if (checkInAllBtnEl){
+  checkInAllBtnEl.addEventListener('click', () => {
+    if (isSessionEnded()){ toast('Session has ended — resume it to check players in'); return; }
+    checkInAllArrivals();
+  });
+}
+
+/* ---- Quick add from saved roster (handy after a New Session reset) ---- */
+function renderQuickAdd(){
+  const panel = $('#quickAddPanel');
+  const chipsEl = $('#quickAddChips');
+  if (!panel || !chipsEl) return;
+  const available = state.roster.slice().sort((a,b) => a.localeCompare(b)).filter(n => !isNameActive(n));
+  if (available.length === 0){
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  chipsEl.innerHTML = available.map(name => `
+    <button type="button" class="quick-add-chip" data-name="${esc(name)}">
+      <svg viewBox="0 0 24 24"><use href="#i-plus"/></svg>${esc(name)}
+    </button>
+  `).join('');
+}
+const quickAddChipsEl = $('#quickAddChips');
+if (quickAddChipsEl){
+  quickAddChipsEl.addEventListener('click', (e) => {
+    if (isSessionEnded()){ toast('Session has ended — resume it to add players'); return; }
+    const btn = e.target.closest('button[data-name]');
+    if (!btn) return;
+    addNamesToArrivals([btn.dataset.name]);
+  });
+}
+const quickAddAllBtnEl = $('#quickAddAllBtn');
+if (quickAddAllBtnEl){
+  quickAddAllBtnEl.addEventListener('click', () => {
+    if (isSessionEnded()){ toast('Session has ended — resume it to add players'); return; }
+    const available = state.roster.slice().sort((a,b) => a.localeCompare(b)).filter(n => !isNameActive(n));
+    if (available.length === 0) return;
+    addNamesToArrivals(available);
+  });
+}
+
+/* ================= Render: Courts ================= */
+function fmtClock(ms){
+  const totalSec = Math.floor(ms/1000);
+  const h = Math.floor(totalSec/3600);
+  const m = Math.floor((totalSec%3600)/60);
+  const s = totalSec%60;
+  const pad = (n) => String(n).padStart(2,'0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function splitTeams(names){
+  const half = Math.ceil(names.length / 2);
+  return [names.slice(0, half), names.slice(half)];
+}
+function avatarHtml(name){
+  return `<span class="avatar" style="background:${avatarColor(name)}">${initials(name)}</span>`;
+}
+function playerRowHtml(name){
+  const stats = state.playerStats[name];
+  const winChip = (stats && stats.wins > 0) ? `<span class="win-chip">🏆${stats.wins}</span>` : '';
+  const games = stats ? (stats.games || 0) : 0;
+  const gamesChip = gamesChipHtml(games);
+  return `<span class="player-col">
+    <span class="player-row">${avatarHtml(name)}<span class="player-name-txt">${esc(name)}</span>${winChip}</span>
+    <span class="player-games-row">${gamesChip}</span>
+  </span>`;
+}
+function teamColHtml(names, side, gameSize){
+  const slots = Math.ceil(gameSize / 2);
+  const rows = names.map(n => playerRowHtml(n));
+  while (rows.length < slots) rows.push(`<span class="empty-slot">—</span>`);
+  return `<div class="team team-${side}">${rows.join('')}</div>`;
+}
+
+function renderCourts(){
+  courtsGrid.innerHTML = '';
+  if (state.courts.length === 0){
+    courtsGrid.innerHTML = '<div class="courts-empty">No courts yet. Add some in Settings.</div>';
+    return;
+  }
+  const gameSize = state.session.gameSize;
+  state.courts.forEach(court => {
+    const card = document.createElement('div');
+    card.className = 'court-card' + (court.status === 'playing' ? ' playing' : '');
+    card.dataset.id = court.id;
+
+    const courtIcon = `<svg viewBox="0 0 24 24"><use href="#i-court"/></svg>`;
+
+    if (court.status === 'open'){
+      const enough = state.stack.length >= gameSize;
+      const lastResultHtml = court.lastResult ? `
+        <div class="last-result">
+          <svg viewBox="0 0 24 24"><use href="#i-paddle"/></svg>
+          ${court.lastResult.winnerNames ? `${esc(court.lastResult.winnerNames.join(' & '))} won last${court.lastResult.scoreLine ? ' · ' + esc(court.lastResult.scoreLine) : ''}` : 'Last game finished'}
+        </div>` : '';
+      const ended = isSessionEnded();
+      let matchupHtml;
+      if (enough){
+        const [a, b] = splitTeams(state.stack.slice(0, gameSize).map(p => p.name));
+        matchupHtml = `<div class="matchup">${teamColHtml(a,'a',gameSize)}<div class="vs-divider"></div>${teamColHtml(b,'b',gameSize)}</div>`;
+      } else {
+        matchupHtml = `<div class="matchup" style="align-items:center;justify-content:center"><span class="empty-slot">Needs ${gameSize - state.stack.length} more in the stack</span></div>`;
+      }
+      card.innerHTML = `
+        <div class="court-top">
+          <span class="court-name-wrap">${courtIcon}<input class="court-name" value="${esc(court.name)}" data-act="rename" maxlength="24" aria-label="Court name"></span>
+          <span class="status-badge open">Open</span>
+        </div>
+        ${lastResultHtml}
+        ${matchupHtml}
+        <button type="button" class="court-cta call" data-act="call" ${(enough && !ended) ? '' : 'disabled'}>${ended ? '🔒 Session ended' : 'Call next ' + gameSize}</button>
+      `;
+    } else {
+      const elapsed = Date.now() - court.startTime;
+      const [a, b] = splitTeams(court.players);
+      card.innerHTML = `
+        <div class="court-top">
+          <span class="court-name-wrap">${courtIcon}<input class="court-name" value="${esc(court.name)}" data-act="rename" maxlength="24" aria-label="Court name"></span>
+          <span class="status-badge playing">On court</span>
+        </div>
+        <div class="matchup">${teamColHtml(a,'a',gameSize)}<div class="vs-divider"></div>${teamColHtml(b,'b',gameSize)}</div>
+        <div class="timer" data-role="timer">${fmtClock(elapsed)}</div>
+        <button type="button" class="court-cta end" data-act="end">End game</button>
+      `;
+    }
+    courtsGrid.appendChild(card);
+  });
+}
+
+courtsGrid.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const card = btn.closest('.court-card');
+  const court = state.courts.find(c => c.id === card.dataset.id);
+  if (!court) return;
+  if (btn.dataset.act === 'call'){
+    if (isSessionEnded()){ toast('Session has ended — resume it to start new matches'); return; }
+    callNext(court);
+  }
+  if (btn.dataset.act === 'end') openEndgame(court);
+});
+
+courtsGrid.addEventListener('change', (e) => {
+  const input = e.target.closest('input[data-act="rename"]');
+  if (!input) return;
+  const card = input.closest('.court-card');
+  const court = state.courts.find(c => c.id === card.dataset.id);
+  if (!court) return;
+  court.name = input.value.trim() || court.name;
+  persist();
+  renderHistory();
+});
+
+function callNext(court){
+  const gameSize = state.session.gameSize;
+  if (state.stack.length < gameSize){
+    toast('Not enough players in the stack yet');
+    return;
+  }
+  const taken = state.stack.splice(0, gameSize);
+  court.status = 'playing';
+  court.players = taken.map(p => p.name);
+  court.startTime = Date.now();
+  ping();
+  toast(court.name + ': ' + court.players.join(', '));
+  renderAll(); persist();
+}
+
+/* ---- End game modal ---- */
+const endgameOverlay = $('#endgameOverlay');
+const endgameList = $('#endgameList');
+const endgameTitle = $('#endgameTitle');
+const winnerPick = $('#winnerPick');
+let endgameCourtId = null;
+let endgameChoices = {};
+let endgameTeams = [[],[]];
+let endgameWinnerSide = null; // 'a' | 'b' | null
+let endgameScores = { a: '', b: '' }; // raw input string values
+
+function openEndgame(court){
+  endgameCourtId = court.id;
+  endgameTitle.textContent = 'End game — ' + court.name;
+  endgameChoices = {};
+  court.players.forEach(name => { endgameChoices[name] = isSessionEnded() ? 'done' : 'requeue'; });
+  endgameTeams = splitTeams(court.players);
+  endgameWinnerSide = null;
+  endgameScores = { a: '', b: '' };
+  const lockNote = $('#endgameLockNote');
+  if (lockNote) lockNote.style.display = isSessionEnded() ? '' : 'none';
+  renderWinnerPick();
+  renderEndgameList();
+  endgameOverlay.hidden = false;
+}
+function renderWinnerPick(){
+  const [a, b] = endgameTeams;
+  const label = state.session.gameSize <= 2 ? 'Player' : 'Team';
+  winnerPick.innerHTML = `
+    <div class="winner-card ${endgameWinnerSide==='a'?'selected':''}" data-side="a">
+      <span class="trophy">🏆</span>
+      <div class="team-label">${label} 1</div>
+      <div class="team-names">${a.map(esc).join(' &amp; ') || '—'}</div>
+      <input class="score-input" type="number" min="0" step="1" inputmode="numeric" placeholder="–" data-side="a" value="${esc(endgameScores.a)}" aria-label="${label} 1 score">
+    </div>
+    <div class="winner-card ${endgameWinnerSide==='b'?'selected':''}" data-side="b">
+      <span class="trophy">🏆</span>
+      <div class="team-label">${label} 2</div>
+      <div class="team-names">${b.map(esc).join(' &amp; ') || '—'}</div>
+      <input class="score-input" type="number" min="0" step="1" inputmode="numeric" placeholder="–" data-side="b" value="${esc(endgameScores.b)}" aria-label="${label} 2 score">
+    </div>
+  `;
+}
+// Scores drive the winner automatically — same rule as the tournament bracket:
+// higher score wins, equal scores clear the pick, and an empty field is just "not entered yet".
+function recomputeWinnerFromScores(){
+  const va = endgameScores.a, vb = endgameScores.b;
+  if (va === '' || vb === '') return; // incomplete — leave any manual pick alone
+  const sa = Number(va), sb = Number(vb);
+  if (isNaN(sa) || isNaN(sb)) return;
+  if (sa > sb) endgameWinnerSide = 'a';
+  else if (sb > sa) endgameWinnerSide = 'b';
+  else endgameWinnerSide = null; // tied — caught properly at confirm time
+}
+function syncWinnerPickSelection(){
+  winnerPick.querySelectorAll('.winner-card[data-side]').forEach(card => {
+    card.classList.toggle('selected', card.dataset.side === endgameWinnerSide);
+  });
+}
+winnerPick.addEventListener('input', (e) => {
+  const input = e.target.closest('.score-input');
+  if (!input) return;
+  endgameScores[input.dataset.side] = input.value;
+  recomputeWinnerFromScores();
+  // Only toggle the selected-card class — rebuilding the DOM here would
+  // destroy and recreate the input mid-keystroke, losing focus and caret position.
+  syncWinnerPickSelection();
+});
+winnerPick.addEventListener('click', (e) => {
+  if (e.target.closest('.score-input')) return; // let the input handle its own clicks
+  const card = e.target.closest('.winner-card[data-side]');
+  if (!card) return;
+  const side = card.dataset.side;
+  endgameWinnerSide = endgameWinnerSide === side ? null : side;
+  syncWinnerPickSelection();
+});
+function renderEndgameList(){
+  const ended = isSessionEnded();
+  endgameList.innerHTML = Object.keys(endgameChoices).map(name => `
+    <div class="endgame-row">
+      <span class="who">${esc(name)}</span>
+      <span class="choice">
+        <button type="button" class="sel-requeue ${endgameChoices[name]==='requeue'?'active':''}" data-name="${esc(name)}" data-choice="requeue" ${ended ? 'disabled' : ''}>Back in stack</button>
+        <button type="button" class="sel-done ${endgameChoices[name]==='done'?'active':''}" data-name="${esc(name)}" data-choice="done">Done for today</button>
+      </span>
+    </div>
+  `).join('');
+}
+endgameList.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-choice]');
+  if (!btn || btn.disabled) return;
+  endgameChoices[btn.dataset.name] = btn.dataset.choice;
+  renderEndgameList();
+});
+$('#endgameCancel').addEventListener('click', () => { endgameOverlay.hidden = true; });
+$('#endgameConfirm').addEventListener('click', () => {
+  const court = state.courts.find(c => c.id === endgameCourtId);
+  if (!court) { endgameOverlay.hidden = true; return; }
+
+  const hasScoreA = endgameScores.a !== '';
+  const hasScoreB = endgameScores.b !== '';
+  if (hasScoreA !== hasScoreB){
+    toast('Enter both scores, or leave both blank to skip');
+    return;
+  }
+  let finalScoreA = null, finalScoreB = null;
+  if (hasScoreA && hasScoreB){
+    finalScoreA = Number(endgameScores.a);
+    finalScoreB = Number(endgameScores.b);
+    if (isNaN(finalScoreA) || isNaN(finalScoreB)){
+      toast('Scores need to be numbers');
+      return;
+    }
+    if (!Number.isInteger(finalScoreA) || !Number.isInteger(finalScoreB) || finalScoreA < 0 || finalScoreB < 0){
+      toast('Scores should be whole numbers, 0 or higher');
+      return;
+    }
+    if (finalScoreA === finalScoreB){
+      toast('Tie scores are not allowed — adjust the score or clear both to skip');
+      return;
+    }
+  }
+  if (endgameWinnerSide === null){
+    if (!confirm('No winner selected — this game won\'t count toward rankings, and players won\'t be sorted into the winners/losers blocks. Clear the court anyway?')) return;
+  }
+  const endTime = Date.now();
+  const winnerNames = endgameWinnerSide === 'a' ? endgameTeams[0] : endgameWinnerSide === 'b' ? endgameTeams[1] : null;
+  const scoreLine = (finalScoreA !== null) ? (endgameWinnerSide === 'a' ? `${finalScoreA}-${finalScoreB}` : `${finalScoreB}-${finalScoreA}`) : null;
+
+  court.players.forEach(name => {
+    const stats = getStats(name);
+    stats.games += 1;
+    if (winnerNames && winnerNames.includes(name)) stats.wins += 1;
+  });
+
+  state.history.unshift({
+    id: nextId('h'), courtName: court.name,
+    teamA: endgameTeams[0].slice(), teamB: endgameTeams[1].slice(),
+    winner: endgameWinnerSide, winnerNames: winnerNames ? winnerNames.slice() : null,
+    scoreA: finalScoreA, scoreB: finalScoreB,
+    startTime: court.startTime, endTime
+  });
+  state.history = state.history.slice(0, 25);
+
+  Object.entries(endgameChoices).forEach(([name, choice]) => {
+    if (choice === 'requeue'){
+      const entry = { id: nextId('p'), name, joinedAt: Date.now(), tag: 'queued' };
+      if (winnerNames){
+        // A winner was recorded — sort into the winners/losers block so the
+        // queue later pairs winners vs winners and losers vs losers.
+        if (winnerNames.includes(name)) state.winnersBlock.push(entry);
+        else state.losersBlock.push(entry);
+      } else {
+        // No winner recorded (skipped/tie) — nothing to sort by, go straight to the queue.
+        state.stack.push(entry);
+      }
+    }
+  });
+  checkBlockFlush();
+
+  court.lastResult = { winnerNames: winnerNames ? winnerNames.slice() : null, scoreLine };
+  court.status = 'open';
+  court.players = [];
+  court.startTime = null;
+  endgameOverlay.hidden = true;
+  toast(court.name + ' cleared');
+  renderAll(); persist();
+});
+
+/* ================= History ================= */
+function renderHistory(){
+  if (state.history.length === 0){
+    historyList.innerHTML = '<div class="history-row" style="justify-content:center">No games finished yet.</div>';
+    return;
+  }
+  historyList.innerHTML = state.history.slice(0,8).map(h => {
+    const dur = fmtClock(h.endTime - h.startTime);
+    const a = (h.teamA||[]).map(esc).join(' &amp; ') || '—';
+    const b = (h.teamB||[]).map(esc).join(' &amp; ') || '—';
+    const matchup = h.winner === 'a' ? `<b>${a}</b> defeated ${b}`
+                  : h.winner === 'b' ? `<b>${b}</b> defeated ${a}`
+                  : `${a} vs ${b}`;
+    const trophy = h.winner ? '🏆 ' : '';
+    const scoreTxt = (h.scoreA != null && h.scoreB != null)
+      ? ` (${h.winner === 'a' ? h.scoreA + '-' + h.scoreB : h.scoreB + '-' + h.scoreA})`
+      : '';
+    return `<div class="history-row"><span>${trophy}<b>${esc(h.courtName)}</b> — ${matchup}${scoreTxt}</span><span>${dur}</span></div>`;
+  }).join('');
+}
+
+/* ================= Live timers ================= */
+setInterval(() => {
+  document.querySelectorAll('.court-card.playing').forEach(card => {
+    const court = state.courts.find(c => c.id === card.dataset.id);
+    if (!court || !court.startTime) return;
+    const el = card.querySelector('[data-role="timer"]');
+    if (el) el.textContent = fmtClock(Date.now() - court.startTime);
+  });
+}, 1000);
+
+/* ================= Session name ================= */
+sessionNameInput.addEventListener('change', () => {
+  state.session.name = sessionNameInput.value.trim() || 'Open Play';
+  sessionNameInput.value = state.session.name;
+  persist();
+});
+
+/* ================= Rankings modal ================= */
+const rankingsOverlay = $('#rankingsOverlay');
+const rankingsList = $('#rankingsList');
+
+function renderRankings(){
+  const rows = Object.entries(state.playerStats)
+    .map(([name, stats]) => ({ name, wins: stats.wins || 0, games: stats.games || 0 }))
+    .filter(r => r.games > 0)
+    .sort((a,b) => b.wins - a.wins || (b.wins/b.games) - (a.wins/a.games) || b.games - a.games || a.name.localeCompare(b.name));
+
+  if (rows.length === 0){
+    rankingsList.innerHTML = '<div class="rankings-empty">No games recorded yet.<br>Rankings fill in once you pick a winner after a match.</div>';
+    return;
+  }
+  rankingsList.innerHTML = rows.map((r, idx) => {
+    const rank = idx + 1;
+    const losses = r.games - r.wins;
+    const pct = Math.round((r.wins / r.games) * 100);
+    const topClass = rank <= 3 ? ' top' + rank : '';
+    return `
+      <div class="rank-row${topClass}">
+        <span class="rank-num">${rank}</span>
+        <span class="rank-name">${esc(r.name)}</span>
+        <span class="rank-games" title="${r.games} games played">${r.games}G</span>
+        <span class="rank-record">${r.wins}-${losses}</span>
+        <span class="rank-pct">${pct}%</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function openRankings(){
+  renderRankings();
+  rankingsOverlay.hidden = false;
+}
+$('#rankingsBtn').addEventListener('click', openRankings);
+$('#rankingsDone').addEventListener('click', () => { rankingsOverlay.hidden = true; });
+
+/* ================= Settings modal ================= */
+const settingsOverlay = $('#settingsOverlay');
+const settingsSessionName = $('#settingsSessionName');
+const gameSizeSeg = $('#gameSizeSeg');
+const courtCountNum = $('#courtCountNum');
+const courtNameRows = $('#courtNameRows');
+const soundToggle = $('#soundToggle');
+
+function openSettings(){
+  settingsSessionName.value = state.session.name;
+  courtCountNum.textContent = state.courts.length;
+  soundToggle.checked = state.session.soundOn;
+  [...gameSizeSeg.children].forEach(b => b.classList.toggle('active', Number(b.dataset.size) === state.session.gameSize));
+  renderCourtNameRows();
+  if ($('#rosterSearchInput')) $('#rosterSearchInput').value = '';
+  renderRosterManageList('');
+  updateEndSessionBtn();
+  settingsOverlay.hidden = false;
+}
+function renderCourtNameRows(){
+  courtNameRows.innerHTML = state.courts.map((c,i) => `<input type="text" value="${esc(c.name)}" data-idx="${i}" maxlength="24">`).join('');
+}
+courtNameRows.addEventListener('change', (e) => {
+  const input = e.target.closest('input[data-idx]');
+  if (!input) return;
+  const idx = Number(input.dataset.idx);
+  if (state.courts[idx]) state.courts[idx].name = input.value.trim() || state.courts[idx].name;
+  persist();
+});
+
+$('#settingsBtn').addEventListener('click', openSettings);
+$('#settingsDone').addEventListener('click', () => { settingsOverlay.hidden = true; renderAll(); persist(); });
+
+$('#endSessionBtn').addEventListener('click', () => {
+  if (isSessionEnded()) resumeSession(); else endSession();
+});
+resumeSessionBtn.addEventListener('click', () => { resumeSession(); });
+
+gameSizeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-size]');
+  if (!btn) return;
+  state.session.gameSize = Number(btn.dataset.size);
+  [...gameSizeSeg.children].forEach(b => b.classList.toggle('active', b === btn));
+  checkBlockFlush(); // a partial block may now already meet the new (possibly smaller) threshold
+  persist(); renderAll();
+});
+
+$('#courtPlus').addEventListener('click', () => {
+  if (state.courts.length >= 24) return;
+  const n = state.courts.length + 1;
+  state.courts.push({ id: nextId('c'), name: 'Court ' + n, status:'open', players:[], startTime:null, lastResult:null });
+  courtCountNum.textContent = state.courts.length;
+  renderCourtNameRows(); persist(); renderAll();
+});
+$('#courtMinus').addEventListener('click', () => {
+  if (state.courts.length <= 1) return;
+  const last = state.courts[state.courts.length - 1];
+  if (last.status === 'playing'){
+    if (!confirm(last.name + ' is currently in play. Remove it anyway? The players on it will be put back at the front of the stack.')) return;
+    // Don't lose the players who were mid-game — send them back to the front of the queue.
+    const returning = last.players.map(name => ({ id: nextId('p'), name, joinedAt: Date.now(), tag: 'queued' }));
+    state.stack.unshift(...returning);
+  }
+  state.courts.pop();
+  courtCountNum.textContent = state.courts.length;
+  renderCourtNameRows(); persist(); renderAll();
+});
+
+soundToggle.addEventListener('change', () => {
+  state.session.soundOn = soundToggle.checked;
+  persist();
+});
+
+settingsSessionName.addEventListener('change', () => {
+  state.session.name = settingsSessionName.value.trim() || 'Open Play';
+  sessionNameInput.value = state.session.name;
+  persist();
+});
+
+/* ---- Export / Import ---- */
+$('#exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'paddle-stack-queue-backup.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Backup exported');
+});
+$('#importBtn').addEventListener('click', () => $('#importFile').click());
+$('#importFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!confirm('Importing a backup will overwrite all current data (stack, courts, history, rankings). Continue?')){
+    e.target.value = '';
+    return;
+  }
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || !parsed.session || !Array.isArray(parsed.courts) || !Array.isArray(parsed.stack)){
+      throw new Error('bad shape');
+    }
+    if (!Array.isArray(parsed.history)) parsed.history = [];
+    if (!Array.isArray(parsed.winnersBlock)) parsed.winnersBlock = [];
+    if (!Array.isArray(parsed.losersBlock)) parsed.losersBlock = [];
+    if (!Array.isArray(parsed.arrivals)) parsed.arrivals = [];
+    if (!Array.isArray(parsed.roster)) parsed.roster = [];
+    if (!parsed.playerStats || typeof parsed.playerStats !== 'object') parsed.playerStats = {};
+    parsed.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; });
+    parsed.stack.forEach(p => { if (!p.tag) p.tag = 'new'; });
+    if (!parsed.session.status) parsed.session.status = 'active';
+    state = parsed;
+    persist();
+    renderRosterList();
+    renderAll();
+    openSettings();
+    toast('Backup imported');
+  }catch(err){
+    toast('Could not read that file');
+  }
+  e.target.value = '';
+});
+
+$('#newSessionBtn').addEventListener('click', () => {
+  if (!confirm('Start a new session? This clears the stack, courts, blocks, and rankings — but keeps your list of player names so you can re-add them quickly. This cannot be undone. Continue?')) return;
+  state.arrivals = [];
+  state.stack = [];
+  state.winnersBlock = [];
+  state.losersBlock = [];
+  state.history = [];
+  state.playerStats = {};
+  state.session.status = 'active';
+  state.courts.forEach(c => { c.status = 'open'; c.players = []; c.startTime = null; c.lastResult = null; });
+  persist();
+  applySessionLockUI();
+  settingsOverlay.hidden = true;
+  renderRosterList();
+  renderAll();
+  toast('New session started — player list kept');
+});
+
+$('#resetBtn').addEventListener('click', () => {
+  if (!confirm('This erases everything — stack, courts, history, rankings, and your player list. This cannot be undone. Continue?')) return;
+  state = {
+    session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active' },
+    courts: defaultCourts(4),
+    arrivals: [],
+    stack: [],
+    winnersBlock: [],
+    losersBlock: [],
+    history: [],
+    playerStats: {},
+    roster: []
+  };
+  persist();
+  applySessionLockUI();
+  settingsOverlay.hidden = true;
+  renderRosterList();
+  renderAll();
+  toast('All data erased');
+});
+
+/* ================= Mobile tabs ================= */
+$('#tabStack').addEventListener('click', () => {
+  appShell.classList.add('show-stack'); appShell.classList.remove('show-courts');
+  $('#tabStack').classList.add('active'); $('#tabCourts').classList.remove('active');
+});
+$('#tabCourts').addEventListener('click', () => {
+  appShell.classList.add('show-courts'); appShell.classList.remove('show-stack');
+  $('#tabCourts').classList.add('active'); $('#tabStack').classList.remove('active');
+});
+
+/* ================= Render orchestration ================= */
+function renderAll(){
+  applySessionLockUI();
+  renderBlocks();
+  renderStack();
+  renderCourts();
+  renderHistory();
+  renderArrivals();
+  renderQuickAdd();
+}
+
+/* ================= Boot ================= */
+(async function init(){
+  idb = await openDB();
+  const saved = await loadPersisted();
+  if (saved && saved.session && Array.isArray(saved.courts) && Array.isArray(saved.stack)){
+    state = saved;
+    if (!Array.isArray(state.history)) state.history = [];
+    if (!Array.isArray(state.winnersBlock)) state.winnersBlock = [];
+    if (!Array.isArray(state.losersBlock)) state.losersBlock = [];
+    if (!Array.isArray(state.arrivals)) state.arrivals = [];
+    if (!state.playerStats || typeof state.playerStats !== 'object') state.playerStats = {};
+    if (!Array.isArray(state.roster)){
+      // Backfill roster for older saves from every name we can find, so no one is lost.
+      const names = new Set();
+      state.stack.forEach(p => names.add(p.name));
+      state.winnersBlock.forEach(p => names.add(p.name));
+      state.losersBlock.forEach(p => names.add(p.name));
+      state.courts.forEach(c => (c.players || []).forEach(n => names.add(n)));
+      Object.keys(state.playerStats).forEach(n => names.add(n));
+      state.roster = [...names];
+    }
+    state.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; });
+    state.stack.forEach(p => { if (!p.tag) p.tag = 'new'; });
+    if (!state.session.status) state.session.status = 'active';
+  }
+  sessionNameInput.value = state.session.name;
+  renderRosterList();
+  renderAll();
+  if (window.innerWidth > 880){
+    appShell.classList.add('show-stack','show-courts');
+  }
+})();
+
+})();
+</script>
+</body>
+</html>
