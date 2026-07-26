@@ -1128,16 +1128,63 @@ function gamesChipHtml(games){
    are pulled in normal FIFO order to keep courts moving. */
 function selectMatchEntries(gameSize, sourceStack){
   const stack = sourceStack || state.stack;
+  let base;
   if (!state.session.targetGamesEnabled || stack.length === 0){
-    return stack.slice(0, gameSize);
+    base = stack.slice(0, gameSize);
+  } else {
+    const indexed = stack.map((entry, idx) => ({
+      entry, idx, games: getGamesPlayed(entry.name)
+    }));
+    indexed.sort((a, b) => (a.games - b.games) || (a.idx - b.idx));
+    const chosen = indexed.slice(0, gameSize);
+    chosen.sort((a, b) => a.idx - b.idx); // restore original stack (FIFO) order for display/team-split
+    base = chosen.map(c => c.entry);
   }
-  const indexed = stack.map((entry, idx) => ({
-    entry, idx, games: getGamesPlayed(entry.name)
-  }));
-  indexed.sort((a, b) => (a.games - b.games) || (a.idx - b.idx));
-  const chosen = indexed.slice(0, gameSize);
-  chosen.sort((a, b) => a.idx - b.idx); // restore original stack (FIFO) order for display/team-split
-  return chosen.map(c => c.entry);
+  return applyFixedDuoToSelection(base, stack, gameSize);
+}
+/* Fixed Duos affect not just how a chosen foursome gets split into teams
+   (see computeTeamPairing) but which foursome gets chosen in the first
+   place: if one half of a fixed duo is about to be called up but their
+   partner is still waiting further back in the stack, pull the partner into
+   this match too (bumping whoever has the least claim to the spot — a
+   non-duo player, picked by lowest queue priority) so the duo actually ends
+   up playing together instead of in two separate matches. Only meaningful
+   for doubles, and only while "Avoid Repeating Teammates" is on, matching
+   where Fixed Duos are surfaced in Settings. */
+function applyFixedDuoToSelection(base, pool, gameSize){
+  if (gameSize !== 4 || !state.session.avoidRepeatTeammates) return base;
+  const duos = state.session.fixedDuos || [];
+  if (duos.length === 0) return base;
+  const idxOf = new Map();
+  pool.forEach((e, i) => idxOf.set(e.id, i));
+  const duoNames = new Set(duos.flatMap(d => [d.a, d.b]));
+  let result = base.slice();
+  duos.forEach(duo => {
+    const names = result.map(e => e.name);
+    const hasA = names.includes(duo.a), hasB = names.includes(duo.b);
+    if (hasA === hasB) return; // both already together, or neither queued for this match — nothing to adjust
+    const keepName = hasA ? duo.a : duo.b;
+    const missingName = hasA ? duo.b : duo.a;
+    const resultIds = new Set(result.map(e => e.id));
+    const partnerEntry = pool.find(e => e.name === missingName && !resultIds.has(e.id));
+    if (!partnerEntry) return; // partner isn't checked in / isn't in this court's slice of the stack at all
+    // Pick who to bump: prefer a player not part of any fixed duo themselves,
+    // and among candidates, the one with the least seniority (furthest back
+    // in this stack slice) so the swap disturbs FIFO order as little as possible.
+    let bumpIdx = -1, bumpScore = -1;
+    result.forEach((e, i) => {
+      if (e.name === keepName) return; // never bump the duo member we're keeping
+      const inAnyDuo = duoNames.has(e.name);
+      const stackIdx = idxOf.has(e.id) ? idxOf.get(e.id) : 0;
+      const score = (inAnyDuo ? 0 : 1e6) + stackIdx;
+      if (score > bumpScore){ bumpScore = score; bumpIdx = i; }
+    });
+    if (bumpIdx === -1) return; // no one safe to bump — leave the match as-is
+    result.splice(bumpIdx, 1, partnerEntry);
+  });
+  // Restore stack (FIFO) order so display and team-splitting stay consistent.
+  result.sort((a, b) => (idxOf.get(a.id) ?? 0) - (idxOf.get(b.id) ?? 0));
+  return result;
 }
 function removeEntriesFromStack(entries){
   const ids = new Set(entries.map(e => e.id));
