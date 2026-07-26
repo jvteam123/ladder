@@ -53,7 +53,10 @@ input,select{font-family:inherit}
   background:var(--ink);color:#fff;
   position:sticky;top:0;z-index:40;
   box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+  scrollbar-width:none;
 }
+.topbar::-webkit-scrollbar{display:none}
 .topbar .logo{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
 .topbar .logo svg{width:26px;height:34px}
 .topbar .session-name{
@@ -410,6 +413,25 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
 }
 .history-row b{color:var(--ink)}
 
+/* ---------- Match history modal ---------- */
+.modal.wide{max-width:560px}
+.match-history-list{display:flex;flex-direction:column;gap:.55rem;max-height:52vh;overflow-y:auto;padding:.1rem}
+.match-full-row{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);
+  padding:.65rem .8rem;font-size:.82rem;
+}
+.match-full-head{display:flex;justify-content:space-between;gap:.5rem;margin-bottom:.35rem}
+.match-full-court{font-weight:700;color:var(--ink)}
+.match-full-when{color:var(--slate);font-size:.72rem}
+.match-full-teams{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;color:var(--ink);font-weight:600}
+.match-full-vs{color:var(--slate);font-weight:700;font-size:.7rem;text-transform:uppercase}
+.match-team-won{color:var(--turf-deep)}
+.match-full-meta{color:var(--slate);font-size:.72rem;margin-top:.3rem}
+.swap-note{margin-top:.4rem;padding:.4rem .55rem;background:var(--turf-pale);border-radius:7px;border:1px dashed var(--turf)}
+.swap-note-title{display:flex;align-items:center;font-size:.7rem;font-weight:700;color:var(--turf-deep);margin-bottom:.25rem}
+.swap-note-line{display:block;font-size:.72rem;color:var(--ink);line-height:1.5}
+.swap-note-line s{color:var(--slate);opacity:.75}
+
 /* ---------- Modals ---------- */
 .overlay{
   position:fixed;inset:0;background:rgba(21,36,32,.5);backdrop-filter:blur(2px);
@@ -424,7 +446,7 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
 .modal h3{font-family:var(--font-display);font-size:1.1rem;margin:0 0 1rem}
 .field{margin-bottom:1rem}
 .field label{display:block;font-size:.78rem;font-weight:700;color:var(--slate);margin-bottom:.35rem;text-transform:uppercase;letter-spacing:.03em}
-.field input[type=text],.field select{
+.field input[type=text],.field input[type=number],.field select{
   width:100%;border:1.5px solid var(--line);border-radius:var(--radius-sm);
   padding:.6rem .7rem;font-size:.9rem;background:var(--court);color:var(--ink);
 }
@@ -445,6 +467,24 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
 .court-name-rows{display:flex;flex-direction:column;gap:.4rem;margin-top:.6rem;max-height:180px;overflow-y:auto}
 .court-name-rows input{width:100%;border:1.5px solid var(--line);border-radius:8px;padding:.45rem .6rem;font-size:.82rem}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.3rem 0}
+.target-sub{margin-top:.7rem;padding:.75rem .8rem;background:var(--court);border-radius:var(--radius-sm);border:1.5px solid var(--line)}
+.target-sub label{margin-bottom:.35rem}
+.target-sub input[type=number]{max-width:100px}
+.fixed-duo-add-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+.fixed-duo-add-row select{
+  flex:1;min-width:0;padding:.5rem .6rem;border:1.5px solid var(--line);border-radius:8px;background:#fff;
+  font-size:.82rem;color:var(--ink);
+}
+.fixed-duo-add-row select:focus{border-color:var(--turf)}
+.fixed-duo-list{display:flex;flex-direction:column;gap:.4rem;margin-top:.6rem}
+.fixed-duo-row{
+  display:flex;align-items:center;gap:.5rem;background:#fff;border:1px solid rgba(47,111,94,.25);
+  border-radius:8px;padding:.45rem .6rem;
+}
+.fixed-duo-row .fd-names{flex:1;min-width:0;font-size:.8rem;font-weight:700;color:var(--turf-deep);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fixed-duo-row .fd-names svg{width:12px;height:12px;vertical-align:-1px;margin:0 .25rem;color:var(--turf)}
+.fixed-duo-empty{font-size:.78rem;color:var(--slate);font-style:italic;margin-top:.5rem}
+.games-chip.at-target{background:var(--turf-pale);color:var(--turf-deep)}
 .switch{position:relative;width:44px;height:25px;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0}
 .switch .track{position:absolute;inset:0;background:var(--line);border-radius:99px;transition:background .15s;cursor:pointer}
@@ -614,6 +654,14 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
   .mobile-tabs button svg{width:18px;height:18px}
   .topbar .session-name{max-width:32vw}
 }
+@media (max-width:480px){
+  .topbar{gap:.4rem;padding:.65rem .6rem}
+  .topbar .logo{display:none}
+  .topbar .session-name{max-width:26vw;font-size:.95rem}
+  .topbar .pill{display:none}
+  .icon-btn{width:34px;height:34px;border-radius:9px}
+  .icon-btn svg{width:17px;height:17px}
+}
 @media (prefers-reduced-motion:reduce){
   *{transition:none !important;animation:none !important}
 }
@@ -637,6 +685,8 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
   <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></symbol>
   <symbol id="i-restart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5V1L7 6l5 5V7c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6H4c0 4.4 3.6 8 8 8s8-3.6 8-8-3.6-8-8-8Z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 12H8L7 9Zm3 2v8h1v-8h-1Zm3 0v8h1v-8h-1Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16Zm-1 2v6.4l4.6 2.7 1-1.7-3.6-2.1V6Z"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4 3 8l4 4V9h9V7H7V4Zm10 8-4 4v-3H4v-2h9v-3l4 4Z"/></symbol>
 </svg>
 
 <header class="topbar">
@@ -647,6 +697,7 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
   <div class="spacer"></div>
   <span class="pill" id="stackCountPill">0 in stack</span>
   <button class="icon-btn" id="rankingsBtn" aria-label="Rankings"><svg viewBox="0 0 24 24"><use href="#i-trophy"/></svg></button>
+  <button class="icon-btn" id="matchHistoryBtn" aria-label="Match history"><svg viewBox="0 0 24 24"><use href="#i-clock"/></svg></button>
   <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24"><use href="#i-gear"/></svg></button>
 </header>
 
@@ -759,6 +810,42 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
     </div>
     <hr class="divider">
     <div class="field">
+      <div class="toggle-row">
+        <label style="margin:0">Enable Target Games</label>
+        <label class="switch">
+          <input type="checkbox" id="targetGamesToggle">
+          <span class="track"></span>
+        </label>
+      </div>
+      <p class="add-hint" style="padding:0;margin-top:.4rem">Automatically tracks games played and prioritizes players with fewer games until everyone reaches the target.</p>
+      <div class="target-sub" id="targetGamesSub" hidden>
+        <label for="targetGamesInput">Target games per player</label>
+        <input type="number" id="targetGamesInput" min="1" max="99" step="1" value="7">
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="field">
+      <div class="toggle-row">
+        <label style="margin:0">Avoid Repeating Teammates</label>
+        <label class="switch">
+          <input type="checkbox" id="avoidRepeatToggle">
+          <span class="track"></span>
+        </label>
+      </div>
+      <p class="add-hint" style="padding:0;margin-top:.4rem">When forming doubles teams, tries to pair players who haven't been teammates yet. Repeats only happen if there's no valid alternative.</p>
+      <div class="target-sub" id="fixedDuoSub" hidden>
+        <label>Fixed duo (optional)</label>
+        <p class="add-hint" style="padding:0;margin-bottom:.5rem">Lock two players as permanent teammates whenever they're both in the same match — they'll never be split up, even to avoid a repeat pairing.</p>
+        <div class="fixed-duo-add-row">
+          <select id="fixedDuoNameA"><option value="">Player A…</option></select>
+          <select id="fixedDuoNameB"><option value="">Player B…</option></select>
+          <button type="button" class="btn ghost sm" id="fixedDuoAddBtn">Add</button>
+        </div>
+        <div class="fixed-duo-list" id="fixedDuoList"></div>
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="field">
       <div class="field-head-row">
         <label style="margin:0">Known players</label>
         <span class="count-badge" id="rosterManageCount">0</span>
@@ -797,6 +884,18 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
     <div class="rankings-list" id="rankingsList"></div>
     <div class="modal-actions">
       <button class="btn primary" id="rankingsDone">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Match history modal -->
+<div class="overlay" id="matchHistoryOverlay" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-label="Match history">
+    <h3>🕓 Match History</h3>
+    <p class="winner-note" style="margin:-.3rem 0 .8rem">Every completed match this session, in full.</p>
+    <div class="match-history-list" id="matchHistoryFullList"></div>
+    <div class="modal-actions">
+      <button class="btn primary" id="matchHistoryDone">Done</button>
     </div>
   </div>
 </div>
@@ -887,21 +986,26 @@ async function loadPersisted(){
 /* ================= State ================= */
 function defaultCourts(n){
   return Array.from({length:n}, (_, i) => ({
-    id: 'c'+(i+1), name: 'Court '+(i+1), status:'open', players: [], startTime: null, lastResult: null
+    id: 'c'+(i+1), name: 'Court '+(i+1), status:'open', players: [], startTime: null, lastResult: null, swapInfo: null
   }));
 }
 
-let state = {
-  session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active' }, // status: 'active' | 'ended'
-  courts: defaultCourts(4),
-  arrivals: [],        // {id, name, addedAt} — added but not yet checked in; not part of the live queue
-  stack: [],           // {id, name, joinedAt, tag: 'new'|'queued'}
-  winnersBlock: [],     // {id, name, joinedAt, tag} — accumulates until gameSize, then flushes to stack as a group
-  losersBlock: [],      // same shape — accumulates until gameSize, then flushes to stack as a group
-  history: [],          // {id, courtName, teamA, teamB, winner, startTime, endTime}
-  playerStats: {},      // name -> {wins, games}
-  roster: []             // known player names, kept across "new session" resets for quick re-adding
-};
+function freshState(){
+  return {
+    session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active', targetGamesEnabled: false, targetGamesPerPlayer: 7, avoidRepeatTeammates: false, fixedDuos: [] }, // status: 'active' | 'ended'
+    courts: defaultCourts(4),
+    arrivals: [],        // {id, name, addedAt} — added but not yet checked in; not part of the live queue
+    stack: [],           // {id, name, joinedAt, tag: 'new'|'queued'}
+    winnersBlock: [],     // {id, name, joinedAt, tag} — accumulates until gameSize, then flushes to stack as a group
+    losersBlock: [],      // same shape — accumulates until gameSize, then flushes to stack as a group
+    history: [],          // {id, courtName, teamA, teamB, winner, startTime, endTime}
+    playerStats: {},      // name -> {wins, games}
+    teammateHistory: {},   // "nameA||nameB" (sorted) -> number of times paired as teammates this session
+    roster: []             // known player names, kept across "new session" resets for quick re-adding
+  };
+}
+
+let state = freshState();
 
 let uid = 1;
 function nextId(prefix){ return prefix + (Date.now().toString(36)) + (uid++); }
@@ -982,9 +1086,114 @@ function getStats(name){
   if (!state.playerStats[name]) state.playerStats[name] = { wins: 0, games: 0 };
   return state.playerStats[name];
 }
+function getGamesPlayed(name){
+  const s = state.playerStats[name];
+  return s ? (s.games || 0) : 0;
+}
 function gamesChipHtml(games){
   const label = games === 1 ? 'GAME PLAYED' : 'GAMES PLAYED';
-  return `<span class="games-chip" title="${games} ${games === 1 ? 'game' : 'games'} played this session">${games} ${label}</span>`;
+  const atTarget = state.session.targetGamesEnabled && games >= state.session.targetGamesPerPlayer;
+  const cls = 'games-chip' + (atTarget ? ' at-target' : '');
+  const title = atTarget
+    ? `${games} ${games === 1 ? 'game' : 'games'} played this session · target reached`
+    : `${games} ${games === 1 ? 'game' : 'games'} played this session`;
+  return `<span class="${cls}" title="${title}">${games} ${label}${atTarget ? ' · 🎯' : ''}</span>`;
+}
+
+/* ---- Target Games: smart match selection ----
+   When enabled, picks the next match from the stack by prioritizing players
+   with fewer games played (so everyone reaches the target as evenly as
+   possible), while keeping FIFO order as the tie-break for equal game counts.
+   This never removes/reorders the underlying stack itself — it only decides
+   which entries get pulled for the next match. Players are never skipped
+   permanently: once the below-target pool runs dry, at-/above-target players
+   are pulled in normal FIFO order to keep courts moving. */
+function selectMatchEntries(gameSize, sourceStack){
+  const stack = sourceStack || state.stack;
+  if (!state.session.targetGamesEnabled || stack.length === 0){
+    return stack.slice(0, gameSize);
+  }
+  const indexed = stack.map((entry, idx) => ({
+    entry, idx, games: getGamesPlayed(entry.name)
+  }));
+  indexed.sort((a, b) => (a.games - b.games) || (a.idx - b.idx));
+  const chosen = indexed.slice(0, gameSize);
+  chosen.sort((a, b) => a.idx - b.idx); // restore original stack (FIFO) order for display/team-split
+  return chosen.map(c => c.entry);
+}
+function removeEntriesFromStack(entries){
+  const ids = new Set(entries.map(e => e.id));
+  state.stack = state.stack.filter(e => !ids.has(e.id));
+}
+
+/* ---- Avoid Repeating Teammates: best-effort team-pairing ----
+   Only meaningful for doubles (2-per-team). Given the players already chosen
+   for a match (selection/priority untouched), reorders them so that
+   splitTeams() produces the teammate pairing with the fewest prior times
+   paired together. Falls back to a repeat only when every possible pairing
+   has already happened (last resort). Does not change who is selected to
+   play — only how the same four players are split into two teams. */
+function pairKey(n1, n2){ return [n1, n2].sort().join('||'); }
+function teammateCount(n1, n2){ return state.teammateHistory[pairKey(n1, n2)] || 0; }
+function recordTeammates(teamNames){
+  for (let i = 0; i < teamNames.length; i++){
+    for (let j = i + 1; j < teamNames.length; j++){
+      const k = pairKey(teamNames[i], teamNames[j]);
+      state.teammateHistory[k] = (state.teammateHistory[k] || 0) + 1;
+    }
+  }
+}
+/* Fixed Duos: pairs of players who should always end up on the same team
+   whenever both are in a match, overriding the repeat-pairing cost logic
+   below. Only meaningful (and only editable in Settings) while "Avoid
+   Repeating Teammates" is on. */
+function findFixedDuo(names){
+  const duos = state.session.fixedDuos || [];
+  for (const duo of duos){
+    if (names.includes(duo.a) && names.includes(duo.b)) return duo;
+  }
+  return null;
+}
+function computeTeamPairing(names){
+  if (!state.session.avoidRepeatTeammates || names.length !== 4) return { order: names.slice(), forcedDuo: false };
+  const duo = findFixedDuo(names);
+  if (duo){
+    const others = names.filter(n => n !== duo.a && n !== duo.b);
+    return { order: [duo.a, duo.b, others[0], others[1]], forcedDuo: true };
+  }
+  const [p0, p1, p2, p3] = names;
+  const options = [
+    { order: [p0,p1,p2,p3], cost: teammateCount(p0,p1) + teammateCount(p2,p3) },
+    { order: [p0,p2,p1,p3], cost: teammateCount(p0,p2) + teammateCount(p1,p3) },
+    { order: [p0,p3,p1,p2], cost: teammateCount(p0,p3) + teammateCount(p1,p2) }
+  ];
+  const minCost = Math.min(...options.map(o => o.cost));
+  // Deterministic tie-break (first minimal-cost option) rather than Math.random():
+  // this function is called once to render the "next up" preview and again when
+  // "Call next" is actually clicked, so it must return the same answer both times
+  // for the same state — a random pick here would let the preview disagree with
+  // the match that's actually formed.
+  return { order: options.find(o => o.cost === minCost).order, forcedDuo: false };
+}
+function orderForTeammatePairing(names){
+  return computeTeamPairing(names).order;
+}
+/* Compares the "natural" pairing (players in their priority/FIFO order, before
+   avoidance) against the pairing actually chosen, and — if they differ —
+   describes the swap for the transparency log. Returns null when nothing
+   changed (no swap needed) or the feature isn't a fit (not doubles). */
+function buildSwapInfo(naturalNames, chosenNames, forcedDuo){
+  if (naturalNames.length !== 4) return null;
+  if (JSON.stringify(naturalNames) === JSON.stringify(chosenNames)) return null;
+  const [natA, natB] = splitTeams(naturalNames);
+  const [chA, chB] = splitTeams(chosenNames);
+  return {
+    naturalTeamA: natA, naturalTeamB: natB,
+    chosenTeamA: chA, chosenTeamB: chB,
+    naturalCost: teammateCount(natA[0], natA[1]) + teammateCount(natB[0], natB[1]),
+    chosenCost: teammateCount(chA[0], chA[1]) + teammateCount(chB[0], chB[1]),
+    forcedDuo: !!forcedDuo
+  };
 }
 
 /* ================= Session lock (End session / Resume) ================= */
@@ -1044,9 +1253,10 @@ function renderStack(){
     return;
   }
   const gameSize = state.session.gameSize;
+  const nextUpIds = new Set(selectMatchEntries(gameSize).map(e => e.id));
   state.stack.forEach((entry, idx) => {
     const row = document.createElement('div');
-    row.className = 'paddle' + (idx < gameSize ? ' next-up' : '');
+    row.className = 'paddle' + (nextUpIds.has(entry.id) ? ' next-up' : '');
     row.draggable = false;
     row.dataset.id = entry.id;
     const stats = state.playerStats[entry.name];
@@ -1438,6 +1648,29 @@ function teamColHtml(names, side, gameSize){
   return `<div class="team team-${side}">${rows.join('')}</div>`;
 }
 
+/* Sequentially allocates upcoming stack entries to each *open* court, in
+   court order, without mutating the real stack. Used both to render each
+   open court's "next up" preview and to decide exactly who gets called when
+   a specific court's "Call next" is clicked — keeping the two in sync so a
+   court never calls a different group of players than what it just showed. */
+function computeOpenCourtQueue(gameSize){
+  const queue = new Map(); // courtId -> { taken: entries|null, remaining: number available at this point }
+  let previewStack = state.stack.slice();
+  state.courts.forEach(court => {
+    if (court.status !== 'open') return;
+    const remaining = previewStack.length;
+    if (remaining >= gameSize){
+      const taken = selectMatchEntries(gameSize, previewStack);
+      const takenIds = new Set(taken.map(e => e.id));
+      previewStack = previewStack.filter(e => !takenIds.has(e.id));
+      queue.set(court.id, { taken, remaining });
+    } else {
+      queue.set(court.id, { taken: null, remaining });
+    }
+  });
+  return queue;
+}
+
 function renderCourts(){
   courtsGrid.innerHTML = '';
   if (state.courts.length === 0){
@@ -1445,6 +1678,10 @@ function renderCourts(){
     return;
   }
   const gameSize = state.session.gameSize;
+  // Preview-only allocation: as we walk through open courts in order, each
+  // one "claims" its own group of next-up players so two open courts never
+  // preview the exact same players at the same time.
+  const openQueue = computeOpenCourtQueue(gameSize);
   state.courts.forEach(court => {
     const card = document.createElement('div');
     card.className = 'court-card' + (court.status === 'playing' ? ' playing' : '');
@@ -1453,7 +1690,9 @@ function renderCourts(){
     const courtIcon = `<svg viewBox="0 0 24 24"><use href="#i-court"/></svg>`;
 
     if (court.status === 'open'){
-      const enough = state.stack.length >= gameSize;
+      const slot = openQueue.get(court.id) || { taken: null, remaining: state.stack.length };
+      const taken = slot.taken;
+      const enough = !!taken;
       const lastResultHtml = court.lastResult ? `
         <div class="last-result">
           <svg viewBox="0 0 24 24"><use href="#i-paddle"/></svg>
@@ -1462,10 +1701,11 @@ function renderCourts(){
       const ended = isSessionEnded();
       let matchupHtml;
       if (enough){
-        const [a, b] = splitTeams(state.stack.slice(0, gameSize).map(p => p.name));
+        const names = orderForTeammatePairing(taken.map(p => p.name));
+        const [a, b] = splitTeams(names);
         matchupHtml = `<div class="matchup">${teamColHtml(a,'a',gameSize)}<div class="vs-divider"></div>${teamColHtml(b,'b',gameSize)}</div>`;
       } else {
-        matchupHtml = `<div class="matchup" style="align-items:center;justify-content:center"><span class="empty-slot">Needs ${gameSize - state.stack.length} more in the stack</span></div>`;
+        matchupHtml = `<div class="matchup" style="align-items:center;justify-content:center"><span class="empty-slot">Needs ${Math.max(0, gameSize - slot.remaining)} more in the stack</span></div>`;
       }
       card.innerHTML = `
         <div class="court-top">
@@ -1519,13 +1759,20 @@ courtsGrid.addEventListener('change', (e) => {
 
 function callNext(court){
   const gameSize = state.session.gameSize;
-  if (state.stack.length < gameSize){
+  const openQueue = computeOpenCourtQueue(gameSize);
+  const slot = openQueue.get(court.id);
+  const taken = slot ? slot.taken : null;
+  if (!taken){
     toast('Not enough players in the stack yet');
     return;
   }
-  const taken = state.stack.splice(0, gameSize);
+  removeEntriesFromStack(taken);
   court.status = 'playing';
-  court.players = taken.map(p => p.name);
+  const naturalNames = taken.map(p => p.name);
+  const pairing = computeTeamPairing(naturalNames);
+  const chosenNames = pairing.order;
+  court.players = chosenNames;
+  court.swapInfo = state.session.avoidRepeatTeammates ? buildSwapInfo(naturalNames, chosenNames, pairing.forcedDuo) : null;
   court.startTime = Date.now();
   ping();
   toast(court.name + ': ' + court.players.join(', '));
@@ -1666,15 +1913,18 @@ $('#endgameConfirm').addEventListener('click', () => {
     stats.games += 1;
     if (winnerNames && winnerNames.includes(name)) stats.wins += 1;
   });
+  recordTeammates(endgameTeams[0]);
+  recordTeammates(endgameTeams[1]);
 
   state.history.unshift({
     id: nextId('h'), courtName: court.name,
     teamA: endgameTeams[0].slice(), teamB: endgameTeams[1].slice(),
     winner: endgameWinnerSide, winnerNames: winnerNames ? winnerNames.slice() : null,
     scoreA: finalScoreA, scoreB: finalScoreB,
-    startTime: court.startTime, endTime
+    startTime: court.startTime, endTime,
+    swapInfo: court.swapInfo || null
   });
-  state.history = state.history.slice(0, 25);
+  state.history = state.history.slice(0, 100);
 
   Object.entries(endgameChoices).forEach(([name, choice]) => {
     if (choice === 'requeue'){
@@ -1696,6 +1946,7 @@ $('#endgameConfirm').addEventListener('click', () => {
   court.status = 'open';
   court.players = [];
   court.startTime = null;
+  court.swapInfo = null;
   endgameOverlay.hidden = true;
   toast(court.name + ' cleared');
   renderAll(); persist();
@@ -1721,6 +1972,66 @@ function renderHistory(){
     return `<div class="history-row"><span>${trophy}<b>${esc(h.courtName)}</b> — ${matchup}${scoreTxt}</span><span>${dur}</span></div>`;
   }).join('');
 }
+
+/* ================= Match History modal (full detail + swap log) ================= */
+const matchHistoryOverlay = $('#matchHistoryOverlay');
+const matchHistoryFullList = $('#matchHistoryFullList');
+
+function fmtDateTime(ts){
+  if (!ts) return '';
+  try{
+    return new Date(ts).toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+  }catch(e){ return ''; }
+}
+
+function swapNoteHtml(swapInfo){
+  if (!swapInfo) return '';
+  const naturalLine = `${swapInfo.naturalTeamA.map(esc).join(' &amp; ')} vs ${swapInfo.naturalTeamB.map(esc).join(' &amp; ')}`;
+  const chosenLine = `${swapInfo.chosenTeamA.map(esc).join(' &amp; ')} vs ${swapInfo.chosenTeamB.map(esc).join(' &amp; ')}`;
+  const title = swapInfo.forcedDuo ? 'Swapped to keep a fixed duo together' : 'Swapped to avoid a repeat pairing';
+  return `<div class="swap-note">
+    <span class="swap-note-title"><svg viewBox="0 0 24 24" style="width:12px;height:12px;vertical-align:-2px;margin-right:.3rem"><use href="#i-swap"/></svg>${title}</span>
+    <span class="swap-note-line">Would've been: <s>${naturalLine}</s></span>
+    <span class="swap-note-line">Played instead: <b>${chosenLine}</b></span>
+  </div>`;
+}
+
+function matchFullRowHtml(h){
+  const a = (h.teamA||[]).map(esc).join(' &amp; ') || '—';
+  const b = (h.teamB||[]).map(esc).join(' &amp; ') || '—';
+  const aWon = h.winner === 'a', bWon = h.winner === 'b';
+  const scoreTxt = (h.scoreA != null && h.scoreB != null)
+    ? (h.winner === 'a' ? `${h.scoreA}-${h.scoreB}` : `${h.scoreB}-${h.scoreA}`)
+    : 'No score recorded';
+  const dur = (h.startTime && h.endTime) ? fmtClock(h.endTime - h.startTime) : '—';
+  const showSwap = state.session.avoidRepeatTeammates && h.swapInfo;
+  return `<div class="match-full-row">
+    <div class="match-full-head">
+      <span class="match-full-court">${esc(h.courtName)}</span>
+      <span class="match-full-when">${fmtDateTime(h.endTime)}</span>
+    </div>
+    <div class="match-full-teams">
+      <span class="${aWon?'match-team-won':''}">${aWon?'🏆 ':''}${a}</span>
+      <span class="match-full-vs">vs</span>
+      <span class="${bWon?'match-team-won':''}">${bWon?'🏆 ':''}${b}</span>
+    </div>
+    <div class="match-full-meta">${scoreTxt} · ${dur} on court</div>
+    ${showSwap ? swapNoteHtml(h.swapInfo) : ''}
+  </div>`;
+}
+
+function renderMatchHistory(){
+  matchHistoryFullList.innerHTML = state.history.length === 0
+    ? '<div class="history-row" style="justify-content:center">No games finished yet.</div>'
+    : state.history.map(matchFullRowHtml).join('');
+}
+
+function openMatchHistory(){
+  renderMatchHistory();
+  matchHistoryOverlay.hidden = false;
+}
+$('#matchHistoryBtn').addEventListener('click', openMatchHistory);
+$('#matchHistoryDone').addEventListener('click', () => { matchHistoryOverlay.hidden = true; });
 
 /* ================= Live timers ================= */
 setInterval(() => {
@@ -1784,11 +2095,26 @@ const gameSizeSeg = $('#gameSizeSeg');
 const courtCountNum = $('#courtCountNum');
 const courtNameRows = $('#courtNameRows');
 const soundToggle = $('#soundToggle');
+const targetGamesToggle = $('#targetGamesToggle');
+const targetGamesSub = $('#targetGamesSub');
+const targetGamesInput = $('#targetGamesInput');
+const avoidRepeatToggle = $('#avoidRepeatToggle');
+const fixedDuoSub = $('#fixedDuoSub');
+const fixedDuoNameA = $('#fixedDuoNameA');
+const fixedDuoNameB = $('#fixedDuoNameB');
+const fixedDuoList = $('#fixedDuoList');
 
 function openSettings(){
   settingsSessionName.value = state.session.name;
   courtCountNum.textContent = state.courts.length;
   soundToggle.checked = state.session.soundOn;
+  targetGamesToggle.checked = state.session.targetGamesEnabled;
+  targetGamesSub.hidden = !state.session.targetGamesEnabled;
+  targetGamesInput.value = state.session.targetGamesPerPlayer;
+  avoidRepeatToggle.checked = state.session.avoidRepeatTeammates;
+  fixedDuoSub.hidden = !state.session.avoidRepeatTeammates;
+  renderFixedDuoNameOptions();
+  renderFixedDuoList();
   [...gameSizeSeg.children].forEach(b => b.classList.toggle('active', Number(b.dataset.size) === state.session.gameSize));
   renderCourtNameRows();
   if ($('#rosterSearchInput')) $('#rosterSearchInput').value = '';
@@ -1796,6 +2122,62 @@ function openSettings(){
   updateEndSessionBtn();
   settingsOverlay.hidden = false;
 }
+
+/* ---- Fixed Duos (only relevant while Avoid Repeating Teammates is on) ---- */
+function allKnownNames(){
+  const names = new Set(state.roster);
+  state.stack.forEach(p => names.add(p.name));
+  return [...names].sort((a,b) => a.localeCompare(b));
+}
+function renderFixedDuoNameOptions(){
+  const names = allKnownNames();
+  const opts = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  fixedDuoNameA.innerHTML = '<option value="">Player A…</option>' + opts;
+  fixedDuoNameB.innerHTML = '<option value="">Player B…</option>' + opts;
+}
+function renderFixedDuoList(){
+  const duos = state.session.fixedDuos || [];
+  if (duos.length === 0){
+    fixedDuoList.innerHTML = '<div class="fixed-duo-empty">No fixed duos yet.</div>';
+    return;
+  }
+  fixedDuoList.innerHTML = duos.map((duo, i) => `
+    <div class="fixed-duo-row">
+      <span class="fd-names">${esc(duo.a)}<svg viewBox="0 0 24 24"><use href="#i-swap"/></svg>${esc(duo.b)}</span>
+      <button type="button" class="rm-del" data-idx="${i}" aria-label="Remove fixed duo of ${esc(duo.a)} and ${esc(duo.b)}"><svg viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+    </div>
+  `).join('');
+}
+$('#fixedDuoAddBtn').addEventListener('click', () => {
+  const a = fixedDuoNameA.value;
+  const b = fixedDuoNameB.value;
+  if (!a || !b){ toast('Pick two players first'); return; }
+  if (a === b){ toast('Pick two different players'); return; }
+  const duos = state.session.fixedDuos || (state.session.fixedDuos = []);
+  const already = duos.some(d => (d.a === a && d.b === b) || (d.a === b && d.b === a));
+  if (already){ toast('That duo is already fixed'); return; }
+  const inOtherDuo = duos.some(d => [d.a, d.b].includes(a) || [d.a, d.b].includes(b));
+  if (inOtherDuo){ toast('One of those players is already in a fixed duo'); return; }
+  duos.push({ a, b });
+  fixedDuoNameA.value = ''; fixedDuoNameB.value = '';
+  renderFixedDuoList();
+  persist();
+  renderCourts();
+  toast(a + ' & ' + b + ' fixed as a duo');
+});
+fixedDuoList.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-idx]');
+  if (!btn) return;
+  const idx = Number(btn.dataset.idx);
+  const duos = state.session.fixedDuos || [];
+  const duo = duos[idx];
+  if (!duo) return;
+  duos.splice(idx, 1);
+  renderFixedDuoList();
+  persist();
+  renderCourts();
+  toast('Fixed duo removed');
+});
 function renderCourtNameRows(){
   courtNameRows.innerHTML = state.courts.map((c,i) => `<input type="text" value="${esc(c.name)}" data-idx="${i}" maxlength="24">`).join('');
 }
@@ -1827,7 +2209,7 @@ gameSizeSeg.addEventListener('click', (e) => {
 $('#courtPlus').addEventListener('click', () => {
   if (state.courts.length >= 24) return;
   const n = state.courts.length + 1;
-  state.courts.push({ id: nextId('c'), name: 'Court ' + n, status:'open', players:[], startTime:null, lastResult:null });
+  state.courts.push({ id: nextId('c'), name: 'Court ' + n, status:'open', players:[], startTime:null, lastResult:null, swapInfo:null });
   courtCountNum.textContent = state.courts.length;
   renderCourtNameRows(); persist(); renderAll();
 });
@@ -1848,6 +2230,28 @@ $('#courtMinus').addEventListener('click', () => {
 soundToggle.addEventListener('change', () => {
   state.session.soundOn = soundToggle.checked;
   persist();
+});
+
+targetGamesToggle.addEventListener('change', () => {
+  state.session.targetGamesEnabled = targetGamesToggle.checked;
+  targetGamesSub.hidden = !targetGamesToggle.checked;
+  persist(); renderAll();
+});
+
+targetGamesInput.addEventListener('change', () => {
+  let n = Math.round(Number(targetGamesInput.value));
+  if (!Number.isFinite(n) || n < 1) n = 1;
+  if (n > 99) n = 99;
+  targetGamesInput.value = n;
+  state.session.targetGamesPerPlayer = n;
+  persist(); renderAll();
+});
+
+avoidRepeatToggle.addEventListener('change', () => {
+  state.session.avoidRepeatTeammates = avoidRepeatToggle.checked;
+  fixedDuoSub.hidden = !avoidRepeatToggle.checked;
+  if (avoidRepeatToggle.checked){ renderFixedDuoNameOptions(); renderFixedDuoList(); }
+  persist(); renderAll();
 });
 
 settingsSessionName.addEventListener('change', () => {
@@ -1887,9 +2291,14 @@ $('#importFile').addEventListener('change', async (e) => {
     if (!Array.isArray(parsed.arrivals)) parsed.arrivals = [];
     if (!Array.isArray(parsed.roster)) parsed.roster = [];
     if (!parsed.playerStats || typeof parsed.playerStats !== 'object') parsed.playerStats = {};
-    parsed.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; });
+    if (!parsed.teammateHistory || typeof parsed.teammateHistory !== 'object') parsed.teammateHistory = {};
+    parsed.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; if (!('swapInfo' in c)) c.swapInfo = null; });
     parsed.stack.forEach(p => { if (!p.tag) p.tag = 'new'; });
     if (!parsed.session.status) parsed.session.status = 'active';
+    if (typeof parsed.session.targetGamesEnabled !== 'boolean') parsed.session.targetGamesEnabled = false;
+    if (!parsed.session.targetGamesPerPlayer || parsed.session.targetGamesPerPlayer < 1) parsed.session.targetGamesPerPlayer = 7;
+    if (typeof parsed.session.avoidRepeatTeammates !== 'boolean') parsed.session.avoidRepeatTeammates = false;
+    if (!Array.isArray(parsed.session.fixedDuos)) parsed.session.fixedDuos = [];
     state = parsed;
     persist();
     renderRosterList();
@@ -1910,8 +2319,9 @@ $('#newSessionBtn').addEventListener('click', () => {
   state.losersBlock = [];
   state.history = [];
   state.playerStats = {};
+  state.teammateHistory = {};
   state.session.status = 'active';
-  state.courts.forEach(c => { c.status = 'open'; c.players = []; c.startTime = null; c.lastResult = null; });
+  state.courts.forEach(c => { c.status = 'open'; c.players = []; c.startTime = null; c.lastResult = null; c.swapInfo = null; });
   persist();
   applySessionLockUI();
   settingsOverlay.hidden = true;
@@ -1922,17 +2332,7 @@ $('#newSessionBtn').addEventListener('click', () => {
 
 $('#resetBtn').addEventListener('click', () => {
   if (!confirm('This erases everything — stack, courts, history, rankings, and your player list. This cannot be undone. Continue?')) return;
-  state = {
-    session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active' },
-    courts: defaultCourts(4),
-    arrivals: [],
-    stack: [],
-    winnersBlock: [],
-    losersBlock: [],
-    history: [],
-    playerStats: {},
-    roster: []
-  };
+  state = freshState();
   persist();
   applySessionLockUI();
   settingsOverlay.hidden = true;
@@ -1973,6 +2373,7 @@ function renderAll(){
     if (!Array.isArray(state.losersBlock)) state.losersBlock = [];
     if (!Array.isArray(state.arrivals)) state.arrivals = [];
     if (!state.playerStats || typeof state.playerStats !== 'object') state.playerStats = {};
+    if (!state.teammateHistory || typeof state.teammateHistory !== 'object') state.teammateHistory = {};
     if (!Array.isArray(state.roster)){
       // Backfill roster for older saves from every name we can find, so no one is lost.
       const names = new Set();
@@ -1983,9 +2384,13 @@ function renderAll(){
       Object.keys(state.playerStats).forEach(n => names.add(n));
       state.roster = [...names];
     }
-    state.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; });
+    state.courts.forEach(c => { if (!('lastResult' in c)) c.lastResult = null; if (!('swapInfo' in c)) c.swapInfo = null; });
     state.stack.forEach(p => { if (!p.tag) p.tag = 'new'; });
     if (!state.session.status) state.session.status = 'active';
+    if (typeof state.session.targetGamesEnabled !== 'boolean') state.session.targetGamesEnabled = false;
+    if (!state.session.targetGamesPerPlayer || state.session.targetGamesPerPlayer < 1) state.session.targetGamesPerPlayer = 7;
+    if (typeof state.session.avoidRepeatTeammates !== 'boolean') state.session.avoidRepeatTeammates = false;
+    if (!Array.isArray(state.session.fixedDuos)) state.session.fixedDuos = [];
   }
   sessionNameInput.value = state.session.name;
   renderRosterList();
