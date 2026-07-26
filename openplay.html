@@ -373,6 +373,14 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
   margin-bottom:.6rem;display:flex;align-items:center;gap:.35rem;
 }
 .last-result svg{width:12px;height:12px;color:var(--clay);flex-shrink:0}
+.last-result span{flex:1;min-width:0}
+.undo-result-btn{
+  flex-shrink:0;font-family:var(--font-mono);font-size:.62rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.03em;color:var(--clay);background:#fff;
+  border:1px solid var(--clay);border-radius:6px;padding:.25rem .5rem;cursor:pointer;
+}
+.undo-result-btn:hover{background:var(--clay);color:#fff}
+.undo-result-btn:active{transform:scale(.96)}
 
 .timer{
   font-family:var(--font-mono);font-size:1.6rem;font-weight:600;letter-spacing:.02em;
@@ -608,8 +616,16 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
 .rank-row.top1 .rank-num{color:#B4870B}
 .rank-row.top2 .rank-num{color:#8A8F92}
 .rank-row.top3 .rank-num{color:#B4712F}
+.rank-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:.28rem}
+.rank-top-line{display:flex;align-items:center;gap:.4rem}
 .rank-row .rank-name{flex:1;min-width:0;font-weight:700;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rank-row .rank-games{font-family:var(--font-mono);font-size:.7rem;color:var(--slate);flex-shrink:0;white-space:nowrap}
+.mvp-badge{
+  flex-shrink:0;font-family:var(--font-mono);font-size:.6rem;font-weight:700;letter-spacing:.02em;
+  color:#B4870B;background:#FFF6E0;border:1px solid #F0D998;border-radius:99px;padding:.15rem .5rem;white-space:nowrap;
+}
+.rank-meta-line{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.rank-row .rank-games{font-family:var(--font-mono);font-size:.62rem;font-weight:600;letter-spacing:.01em;color:var(--slate);flex-shrink:0;white-space:nowrap}
+.rank-avg{font-family:var(--font-mono);font-size:.62rem;font-weight:600;letter-spacing:.01em;color:var(--slate);flex-shrink:0;white-space:nowrap}
 .rank-row .rank-record{font-family:var(--font-mono);font-size:.78rem;color:var(--slate);flex-shrink:0}
 .rank-row .rank-pct{
   font-family:var(--font-mono);font-weight:700;font-size:.78rem;color:var(--turf-deep);
@@ -1083,7 +1099,9 @@ function initials(name){
   return ((parts[0]?.[0]||'') + (parts[1]?.[0]||'')).toUpperCase() || '?';
 }
 function getStats(name){
-  if (!state.playerStats[name]) state.playerStats[name] = { wins: 0, games: 0 };
+  if (!state.playerStats[name]) state.playerStats[name] = { wins: 0, games: 0, scoreSum: 0, scoreGames: 0 };
+  if (state.playerStats[name].scoreSum === undefined) state.playerStats[name].scoreSum = 0;
+  if (state.playerStats[name].scoreGames === undefined) state.playerStats[name].scoreGames = 0;
   return state.playerStats[name];
 }
 function getGamesPlayed(name){
@@ -1425,8 +1443,14 @@ function removeFromRoster(name){
   const idx = state.roster.findIndex(r => r.toLowerCase() === name.toLowerCase());
   if (idx === -1) return;
   state.roster.splice(idx, 1);
+  const lower = name.toLowerCase();
+  if (Array.isArray(state.session.fixedDuos)){
+    state.session.fixedDuos = state.session.fixedDuos.filter(d => d.a.toLowerCase() !== lower && d.b.toLowerCase() !== lower);
+  }
   renderRosterList();
   renderRosterManageList($('#rosterSearchInput') ? $('#rosterSearchInput').value : '');
+  if (!settingsOverlay.hidden){ renderFixedDuoNameOptions(); renderFixedDuoList(); }
+  renderCourts();
   persist();
 }
 function renderRosterManageList(filter){
@@ -1693,10 +1717,12 @@ function renderCourts(){
       const slot = openQueue.get(court.id) || { taken: null, remaining: state.stack.length };
       const taken = slot.taken;
       const enough = !!taken;
+      const canUndo = !!(lastUndo && lastUndo.courtId === court.id);
       const lastResultHtml = court.lastResult ? `
         <div class="last-result">
           <svg viewBox="0 0 24 24"><use href="#i-paddle"/></svg>
-          ${court.lastResult.winnerNames ? `${esc(court.lastResult.winnerNames.join(' & '))} won last${court.lastResult.scoreLine ? ' · ' + esc(court.lastResult.scoreLine) : ''}` : 'Last game finished'}
+          <span>${court.lastResult.winnerNames ? `${esc(court.lastResult.winnerNames.join(' & '))} won last${court.lastResult.scoreLine ? ' · ' + esc(court.lastResult.scoreLine) : ''}` : 'Last game finished'}</span>
+          ${canUndo ? `<button type="button" class="undo-result-btn" data-act="undo-result" title="Wrong winner? Undo and pick again">Undo</button>` : ''}
         </div>` : '';
       const ended = isSessionEnded();
       let matchupHtml;
@@ -1744,6 +1770,7 @@ courtsGrid.addEventListener('click', (e) => {
     callNext(court);
   }
   if (btn.dataset.act === 'end') openEndgame(court);
+  if (btn.dataset.act === 'undo-result') undoLastResult(court.id);
 });
 
 courtsGrid.addEventListener('change', (e) => {
@@ -1767,6 +1794,10 @@ function callNext(court){
     return;
   }
   removeEntriesFromStack(taken);
+  // Starting a fresh match on this court means any previous "undo the last
+  // result" snapshot for it is no longer safe to restore (it would blow away
+  // the new match), so clear it.
+  if (lastUndo && lastUndo.courtId === court.id) lastUndo = null;
   court.status = 'playing';
   const naturalNames = taken.map(p => p.name);
   const pairing = computeTeamPairing(naturalNames);
@@ -1789,6 +1820,24 @@ let endgameChoices = {};
 let endgameTeams = [[],[]];
 let endgameWinnerSide = null; // 'a' | 'b' | null
 let endgameScores = { a: '', b: '' }; // raw input string values
+
+// Undo support: right before a game result is confirmed, we snapshot the
+// entire app state. If the wrong winner gets picked, "Undo" restores that
+// snapshot (putting the match back on the court, unwinding stats/history/
+// queue changes) and reopens the winner picker so it can be redone.
+let lastUndo = null; // { courtId, snapshot: JSON string } | null
+function undoLastResult(courtId){
+  if (!lastUndo || lastUndo.courtId !== courtId) return;
+  let restored;
+  try{ restored = JSON.parse(lastUndo.snapshot); }
+  catch(e){ toast('Could not undo — snapshot was corrupted'); lastUndo = null; return; }
+  state = restored;
+  lastUndo = null;
+  const court = state.courts.find(c => c.id === courtId);
+  renderAll(); persist();
+  toast('Undone — pick the winner again');
+  if (court) openEndgame(court);
+}
 
 function openEndgame(court){
   endgameCourtId = court.id;
@@ -1900,18 +1949,32 @@ $('#endgameConfirm').addEventListener('click', () => {
       toast('Tie scores are not allowed — adjust the score or clear both to skip');
       return;
     }
+  } else if (endgameWinnerSide !== null){
+    // Winner picked manually (by tapping a side) with no scores typed in —
+    // record a default 11–5 scoreline so it still counts toward average score.
+    finalScoreA = endgameWinnerSide === 'a' ? 11 : 5;
+    finalScoreB = endgameWinnerSide === 'b' ? 11 : 5;
   }
   if (endgameWinnerSide === null){
     if (!confirm('No winner selected — this game won\'t count toward rankings, and players won\'t be sorted into the winners/losers blocks. Clear the court anyway?')) return;
   }
+  // Snapshot state now, before anything is mutated, so a wrong pick can be undone.
+  lastUndo = { courtId: court.id, snapshot: JSON.stringify(state) };
   const endTime = Date.now();
   const winnerNames = endgameWinnerSide === 'a' ? endgameTeams[0] : endgameWinnerSide === 'b' ? endgameTeams[1] : null;
   const scoreLine = (finalScoreA !== null) ? (endgameWinnerSide === 'a' ? `${finalScoreA}-${finalScoreB}` : `${finalScoreB}-${finalScoreA}`) : null;
 
-  court.players.forEach(name => {
+  endgameTeams[0].forEach(name => {
     const stats = getStats(name);
     stats.games += 1;
     if (winnerNames && winnerNames.includes(name)) stats.wins += 1;
+    if (finalScoreA !== null){ stats.scoreSum = (stats.scoreSum || 0) + finalScoreA; stats.scoreGames = (stats.scoreGames || 0) + 1; }
+  });
+  endgameTeams[1].forEach(name => {
+    const stats = getStats(name);
+    stats.games += 1;
+    if (winnerNames && winnerNames.includes(name)) stats.wins += 1;
+    if (finalScoreB !== null){ stats.scoreSum = (stats.scoreSum || 0) + finalScoreB; stats.scoreGames = (stats.scoreGames || 0) + 1; }
   });
   recordTeammates(endgameTeams[0]);
   recordTeammates(endgameTeams[1]);
@@ -2056,7 +2119,10 @@ const rankingsList = $('#rankingsList');
 
 function renderRankings(){
   const rows = Object.entries(state.playerStats)
-    .map(([name, stats]) => ({ name, wins: stats.wins || 0, games: stats.games || 0 }))
+    .map(([name, stats]) => ({
+      name, wins: stats.wins || 0, games: stats.games || 0,
+      scoreSum: stats.scoreSum || 0, scoreGames: stats.scoreGames || 0
+    }))
     .filter(r => r.games > 0)
     .sort((a,b) => b.wins - a.wins || (b.wins/b.games) - (a.wins/a.games) || b.games - a.games || a.name.localeCompare(b.name));
 
@@ -2069,13 +2135,26 @@ function renderRankings(){
     const losses = r.games - r.wins;
     const pct = Math.round((r.wins / r.games) * 100);
     const topClass = rank <= 3 ? ' top' + rank : '';
+    const avgScore = r.scoreGames > 0 ? (r.scoreSum / r.scoreGames) : null;
+    const avgHtml = avgScore !== null
+      ? `<span class="rank-avg" title="Average score per game">AVG ${avgScore.toFixed(1)}</span>`
+      : '';
+    const mvpHtml = rank === 1 ? `<span class="mvp-badge" title="Top of the rankings this session">👑 MVP</span>` : '';
     return `
       <div class="rank-row${topClass}">
         <span class="rank-num">${rank}</span>
-        <span class="rank-name">${esc(r.name)}</span>
-        <span class="rank-games" title="${r.games} games played">${r.games}G</span>
-        <span class="rank-record">${r.wins}-${losses}</span>
-        <span class="rank-pct">${pct}%</span>
+        <div class="rank-main">
+          <div class="rank-top-line">
+            <span class="rank-name">${esc(r.name)}</span>
+            ${mvpHtml}
+            <span class="rank-pct">${pct}%</span>
+          </div>
+          <div class="rank-meta-line">
+            <span class="rank-games" title="${r.games} games played">${r.games} ${r.games === 1 ? 'GAME' : 'GAMES'} PLAYED</span>
+            ${avgHtml}
+            <span class="rank-record">${r.wins}-${losses}</span>
+          </div>
+        </div>
       </div>
     `;
   }).join('');
