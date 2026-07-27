@@ -394,6 +394,38 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
   text-align:center;margin-bottom:.7rem;
 }
 
+/* --- Live scoreboard (Settings > Enable Scoring) --- */
+.scoreboard-live{
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px;
+  padding:.65rem .7rem;margin-bottom:.7rem;
+}
+.scoreboard-live.has-winner{border-color:var(--clay);background:rgba(228,105,59,.16)}
+.sbl-row{display:flex;gap:.6rem}
+.sbl-team{flex:1;display:flex;flex-direction:column;align-items:center;gap:.35rem;min-width:0}
+.sbl-label{
+  font-family:var(--font-mono);font-size:.6rem;font-weight:700;letter-spacing:.03em;
+  color:#9fc4b8;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+.sbl-stepper{display:flex;align-items:center;gap:.55rem}
+.sbl-num{font-family:var(--font-mono);font-size:1.5rem;font-weight:700;min-width:1.6ch;text-align:center;color:#fff}
+.score-btn{
+  width:28px;height:28px;border-radius:50%;border:1px solid rgba(255,255,255,.28);
+  background:rgba(255,255,255,.09);color:#fff;font-size:1rem;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;line-height:1;padding:0;flex-shrink:0;
+  transition:background .12s, transform .1s;
+}
+.score-btn:hover:not(:disabled){background:rgba(255,255,255,.2)}
+.score-btn:active:not(:disabled){transform:scale(.92)}
+.score-btn:disabled{opacity:.28;cursor:default}
+.sbl-actions{display:flex;gap:.4rem;margin-top:.6rem}
+.sbl-btn{
+  flex:1;font-family:var(--font-mono);font-size:.64rem;font-weight:700;letter-spacing:.02em;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);color:#dcece5;
+  border-radius:7px;padding:.42rem .3rem;cursor:pointer;text-transform:uppercase;
+}
+.sbl-btn:hover:not(:disabled){background:rgba(255,255,255,.16)}
+.sbl-btn:disabled{opacity:.28;cursor:default}
+
 .court-cta{
   margin-top:auto;width:100%;border:none;border-radius:var(--radius-sm);
   padding:.7rem;font-weight:800;font-size:.88rem;cursor:pointer;letter-spacing:.01em;
@@ -876,6 +908,21 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
     </div>
     <hr class="divider">
     <div class="field">
+      <div class="toggle-row">
+        <label style="margin:0">Enable Scoring</label>
+        <label class="switch">
+          <input type="checkbox" id="scoringToggle">
+          <span class="track"></span>
+        </label>
+      </div>
+      <p class="add-hint" style="padding:0;margin-top:.4rem">Adds a live scoreboard to each in-progress court — serve tracking, point steppers, and side-outs — and carries the score straight into End Game.</p>
+      <div class="target-sub" id="scoringSub" hidden>
+        <label for="winningScoreInput">Winning score</label>
+        <input type="number" id="winningScoreInput" min="1" max="99" step="1" value="11">
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="field">
       <div class="field-head-row">
         <label style="margin:0">Known players</label>
         <span class="count-badge" id="rosterManageCount">0</span>
@@ -1016,13 +1063,13 @@ async function loadPersisted(){
 /* ================= State ================= */
 function defaultCourts(n){
   return Array.from({length:n}, (_, i) => ({
-    id: 'c'+(i+1), name: 'Court '+(i+1), status:'open', players: [], startTime: null, lastResult: null, swapInfo: null
+    id: 'c'+(i+1), name: 'Court '+(i+1), status:'open', players: [], startTime: null, lastResult: null, swapInfo: null, score: null
   }));
 }
 
 function freshState(){
   return {
-    session: { name: 'Renzku Smart Stack', gameSize: 4, soundOn: true, status: 'active', targetGamesEnabled: false, targetGamesPerPlayer: 7, avoidRepeatTeammates: false, fixedDuos: [] }, // status: 'active' | 'ended'
+    session: { name: 'Renzku Smart Stack', gameSize: 4, soundOn: true, status: 'active', targetGamesEnabled: false, targetGamesPerPlayer: 7, avoidRepeatTeammates: false, fixedDuos: [], scoringEnabled: false, winningScore: 11 }, // status: 'active' | 'ended'
     courts: defaultCourts(4),
     arrivals: [],        // {id, name, addedAt} — added but not yet checked in; not part of the live queue
     stack: [],           // {id, name, joinedAt, tag: 'new'|'queued'}
@@ -1769,6 +1816,135 @@ function computeOpenCourtQueue(gameSize){
   return queue;
 }
 
+/* ================= Live Scoring (Settings > Enable Scoring) =================
+   Optional in-progress scoreboard on each "playing" court card: point
+   steppers, serve tracking (server-only scoring, side-outs, switch to
+   serve 2), and short audio cues. Purely additive — when the toggle is
+   off, court.score stays null and courts render exactly as before. When a
+   winner is reached (or the court is sent to End Game), the tracked score
+   flows straight into the existing endgame modal. */
+function freshCourtScore(){
+  return { a: 0, b: 0, serving: 'A', serverNum: 1, firstServe: true, serveUndo: [] };
+}
+function safeN(n){ return (n === null || n === undefined || isNaN(n)) ? 0 : n; }
+function getWinTarget(){ return state.session.winningScore || 11; }
+function detectCourtWinner(sc){
+  if (!sc) return null;
+  const target = getWinTarget();
+  const a = safeN(sc.a), b = safeN(sc.b);
+  if (a >= target && a - b >= 2) return 'a';
+  if (b >= target && b - a >= 2) return 'b';
+  return null;
+}
+
+let scoreAudioCtx = null;
+function scoreTone(freq, duration, type, gainPeak){
+  if (!state.session.soundOn) return;
+  try{
+    scoreAudioCtx = scoreAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = scoreAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(gainPeak || 0.18, t0 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + duration + 0.03);
+  }catch(e){ /* audio not available — fail silently */ }
+}
+function pointUpTone(){ scoreTone(880, 0.13, 'sine', 0.2); }
+function pointDownTone(){ scoreTone(320, 0.12, 'sine', 0.16); }
+function sideOutTone(){ scoreTone(660, 0.09, 'square', 0.15); setTimeout(() => scoreTone(415, 0.16, 'square', 0.15), 90); }
+function winTone(){ [660,880,1100].forEach((f,i) => setTimeout(() => scoreTone(f, 0.18, 'triangle', 0.2), i*110)); }
+
+function adjustCourtScore(court, team, delta){
+  const sc = court.score;
+  if (!sc || detectCourtWinner(sc)) return;
+  if (sc.serving !== team){
+    toast('Only the serving team can score — Team ' + sc.serving + ' is serving.');
+    return;
+  }
+  const key = team === 'A' ? 'a' : 'b';
+  const target = getWinTarget();
+  sc[key] = Math.min(target, Math.max(0, safeN(sc[key]) + delta));
+  persist();
+  if (delta > 0){
+    pointUpTone();
+    if (detectCourtWinner(sc)) setTimeout(winTone, 140);
+  } else {
+    pointDownTone();
+  }
+  renderCourts();
+}
+function courtSideOut(court){
+  const sc = court.score;
+  if (!sc || detectCourtWinner(sc)) return;
+  if (!sc.firstServe && sc.serverNum !== 2) return;
+  sc.serveUndo.push({ serving: sc.serving, serverNum: sc.serverNum, firstServe: sc.firstServe });
+  sc.serving = sc.serving === 'A' ? 'B' : 'A';
+  sc.serverNum = 1;
+  sc.firstServe = false;
+  persist();
+  sideOutTone();
+  renderCourts();
+}
+function courtAdvanceServe(court){
+  const sc = court.score;
+  if (!sc || detectCourtWinner(sc)) return;
+  if (sc.firstServe || sc.serverNum !== 1) return;
+  sc.serveUndo.push({ serving: sc.serving, serverNum: sc.serverNum, firstServe: sc.firstServe });
+  sc.serverNum = 2;
+  persist();
+  sideOutTone();
+  renderCourts();
+}
+function courtUndoServe(court){
+  const sc = court.score;
+  if (!sc || !sc.serveUndo || !sc.serveUndo.length) return;
+  const snap = sc.serveUndo.pop();
+  sc.serving = snap.serving; sc.serverNum = snap.serverNum; sc.firstServe = snap.firstServe;
+  persist();
+  renderCourts();
+}
+function scoreboardHtml(court){
+  const sc = court.score;
+  if (!sc) return '';
+  const winnerSide = detectCourtWinner(sc);
+  const servingA = sc.serving === 'A', servingB = sc.serving === 'B';
+  const serveLabel = sc.firstServe ? '1st Serve' : ('Serve ' + sc.serverNum);
+  const target = getWinTarget();
+  return `
+    <div class="scoreboard-live ${winnerSide ? 'has-winner' : ''}">
+      <div class="sbl-row">
+        <div class="sbl-team">
+          <span class="sbl-label">${winnerSide === 'a' ? '🏆 ' : ''}Team A${servingA ? ' · 🎾 ' + serveLabel : ''}</span>
+          <div class="sbl-stepper">
+            <button type="button" class="score-btn score-btn-minus" data-act="score-minus" data-team="A" aria-label="Decrease Team A score" ${(winnerSide || !servingA || safeN(sc.a) <= 0) ? 'disabled' : ''}>−</button>
+            <span class="sbl-num">${safeN(sc.a)}</span>
+            <button type="button" class="score-btn score-btn-plus" data-act="score-plus" data-team="A" aria-label="Increase Team A score" ${(winnerSide || !servingA || safeN(sc.a) >= target) ? 'disabled' : ''}>+</button>
+          </div>
+        </div>
+        <div class="sbl-team">
+          <span class="sbl-label">${winnerSide === 'b' ? '🏆 ' : ''}Team B${servingB ? ' · 🎾 ' + serveLabel : ''}</span>
+          <div class="sbl-stepper">
+            <button type="button" class="score-btn score-btn-minus" data-act="score-minus" data-team="B" aria-label="Decrease Team B score" ${(winnerSide || !servingB || safeN(sc.b) <= 0) ? 'disabled' : ''}>−</button>
+            <span class="sbl-num">${safeN(sc.b)}</span>
+            <button type="button" class="score-btn score-btn-plus" data-act="score-plus" data-team="B" aria-label="Increase Team B score" ${(winnerSide || !servingB || safeN(sc.b) >= target) ? 'disabled' : ''}>+</button>
+          </div>
+        </div>
+      </div>
+      <div class="sbl-actions">
+        <button type="button" class="sbl-btn" data-act="advance-serve" title="Switch to serve 2" ${(sc.firstServe || sc.serverNum !== 1 || winnerSide) ? 'disabled' : ''}>Serve 2</button>
+        <button type="button" class="sbl-btn" data-act="side-out" title="Side out — switch serving team" ${((!sc.firstServe && sc.serverNum !== 2) || winnerSide) ? 'disabled' : ''}>🔁 Side Out</button>
+        <button type="button" class="sbl-btn" data-act="undo-serve" title="Undo last serve decision" ${(!sc.serveUndo || !sc.serveUndo.length) ? 'disabled' : ''}>↩️</button>
+      </div>
+    </div>`;
+}
+
 function renderCourts(){
   courtsGrid.innerHTML = '';
   if (state.courts.length === 0){
@@ -1819,12 +1995,16 @@ function renderCourts(){
     } else {
       const elapsed = Date.now() - court.startTime;
       const [a, b] = splitTeams(court.players);
+      // Lazily attach a live score object if scoring was turned on mid-match.
+      if (state.session.scoringEnabled && !court.score) court.score = freshCourtScore();
+      const scoreboard = state.session.scoringEnabled ? scoreboardHtml(court) : '';
       card.innerHTML = `
         <div class="court-top">
           <span class="court-name-wrap">${courtIcon}<input class="court-name" value="${esc(court.name)}" data-act="rename" maxlength="24" aria-label="Court name"></span>
           <span class="status-badge playing">On court</span>
         </div>
         <div class="matchup">${teamColHtml(a,'a',gameSize)}<div class="vs-divider"></div>${teamColHtml(b,'b',gameSize)}</div>
+        ${scoreboard}
         <div class="timer" data-role="timer">${fmtClock(elapsed)}</div>
         <button type="button" class="court-cta end" data-act="end">End game</button>
       `;
@@ -1845,6 +2025,11 @@ courtsGrid.addEventListener('click', (e) => {
   }
   if (btn.dataset.act === 'end') openEndgame(court);
   if (btn.dataset.act === 'undo-result') undoLastResult(court.id);
+  if (btn.dataset.act === 'score-plus') adjustCourtScore(court, btn.dataset.team, 1);
+  if (btn.dataset.act === 'score-minus') adjustCourtScore(court, btn.dataset.team, -1);
+  if (btn.dataset.act === 'side-out') courtSideOut(court);
+  if (btn.dataset.act === 'advance-serve') courtAdvanceServe(court);
+  if (btn.dataset.act === 'undo-serve') courtUndoServe(court);
 });
 
 courtsGrid.addEventListener('change', (e) => {
@@ -1879,6 +2064,7 @@ function callNext(court){
   court.players = chosenNames;
   court.swapInfo = state.session.avoidRepeatTeammates ? buildSwapInfo(naturalNames, chosenNames, pairing.forcedDuo) : null;
   court.startTime = Date.now();
+  court.score = state.session.scoringEnabled ? freshCourtScore() : null;
   ping();
   toast(court.name + ': ' + court.players.join(', '));
   renderAll(); persist();
@@ -1921,8 +2107,12 @@ function openEndgame(court){
   endgameTeams = splitTeams(court.players);
   endgameWinnerSide = null;
   endgameScores = { a: '', b: '' };
+  if (state.session.scoringEnabled && court.score){
+    endgameScores = { a: String(safeN(court.score.a)), b: String(safeN(court.score.b)) };
+  }
   const lockNote = $('#endgameLockNote');
   if (lockNote) lockNote.style.display = isSessionEnded() ? '' : 'none';
+  recomputeWinnerFromScores();
   renderWinnerPick();
   renderEndgameList();
   endgameOverlay.hidden = false;
@@ -2084,6 +2274,7 @@ $('#endgameConfirm').addEventListener('click', () => {
   court.players = [];
   court.startTime = null;
   court.swapInfo = null;
+  court.score = null;
   endgameOverlay.hidden = true;
   toast(court.name + ' cleared');
   renderAll(); persist();
@@ -2251,6 +2442,9 @@ const fixedDuoSub = $('#fixedDuoSub');
 const fixedDuoNameA = $('#fixedDuoNameA');
 const fixedDuoNameB = $('#fixedDuoNameB');
 const fixedDuoList = $('#fixedDuoList');
+const scoringToggle = $('#scoringToggle');
+const scoringSub = $('#scoringSub');
+const winningScoreInput = $('#winningScoreInput');
 
 function openSettings(){
   settingsSessionName.value = state.session.name;
@@ -2261,6 +2455,9 @@ function openSettings(){
   targetGamesInput.value = state.session.targetGamesPerPlayer;
   avoidRepeatToggle.checked = state.session.avoidRepeatTeammates;
   fixedDuoSub.hidden = !state.session.avoidRepeatTeammates;
+  scoringToggle.checked = state.session.scoringEnabled;
+  scoringSub.hidden = !state.session.scoringEnabled;
+  winningScoreInput.value = state.session.winningScore;
   renderFixedDuoNameOptions();
   renderFixedDuoList();
   [...gameSizeSeg.children].forEach(b => b.classList.toggle('active', Number(b.dataset.size) === state.session.gameSize));
@@ -2357,7 +2554,7 @@ gameSizeSeg.addEventListener('click', (e) => {
 $('#courtPlus').addEventListener('click', () => {
   if (state.courts.length >= 24) return;
   const n = state.courts.length + 1;
-  state.courts.push({ id: nextId('c'), name: 'Court ' + n, status:'open', players:[], startTime:null, lastResult:null, swapInfo:null });
+  state.courts.push({ id: nextId('c'), name: 'Court ' + n, status:'open', players:[], startTime:null, lastResult:null, swapInfo:null, score:null });
   courtCountNum.textContent = state.courts.length;
   renderCourtNameRows(); persist(); renderAll();
 });
@@ -2399,6 +2596,21 @@ avoidRepeatToggle.addEventListener('change', () => {
   state.session.avoidRepeatTeammates = avoidRepeatToggle.checked;
   fixedDuoSub.hidden = !avoidRepeatToggle.checked;
   if (avoidRepeatToggle.checked){ renderFixedDuoNameOptions(); renderFixedDuoList(); }
+  persist(); renderAll();
+});
+
+scoringToggle.addEventListener('change', () => {
+  state.session.scoringEnabled = scoringToggle.checked;
+  scoringSub.hidden = !scoringToggle.checked;
+  persist(); renderAll();
+});
+
+winningScoreInput.addEventListener('change', () => {
+  let n = Math.round(Number(winningScoreInput.value));
+  if (!Number.isFinite(n) || n < 1) n = 1;
+  if (n > 99) n = 99;
+  winningScoreInput.value = n;
+  state.session.winningScore = n;
   persist(); renderAll();
 });
 
@@ -2538,6 +2750,9 @@ function renderAll(){
     if (!state.session.targetGamesPerPlayer || state.session.targetGamesPerPlayer < 1) state.session.targetGamesPerPlayer = 7;
     if (typeof state.session.avoidRepeatTeammates !== 'boolean') state.session.avoidRepeatTeammates = false;
     if (!Array.isArray(state.session.fixedDuos)) state.session.fixedDuos = [];
+    if (typeof state.session.scoringEnabled !== 'boolean') state.session.scoringEnabled = false;
+    if (!state.session.winningScore || state.session.winningScore < 1) state.session.winningScore = 11;
+    state.courts.forEach(c => { if (!('score' in c)) c.score = null; });
   }
   renderRosterList();
   renderAll();
