@@ -319,6 +319,12 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
 .court-card.playing{border-color:var(--ink);background:#152420;color:#fff}
 
 .court-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding-top:.85rem}
+.court-top-right{display:flex;align-items:center;gap:.4rem;flex-shrink:0}
+.timer-chip{
+  font-family:var(--font-mono);font-size:.66rem;font-weight:700;letter-spacing:.02em;
+  color:#9fc4b8;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+  padding:.25rem .5rem;border-radius:99px;white-space:nowrap;
+}
 .court-name-wrap{display:flex;align-items:center;gap:.4rem;min-width:0}
 .court-name-wrap svg{width:14px;height:14px;color:var(--slate);flex-shrink:0}
 .court-card.playing .court-name-wrap svg{color:#7fa89c}
@@ -1831,7 +1837,7 @@ function computeOpenCourtQueue(gameSize){
    winner is reached (or the court is sent to End Game), the tracked score
    flows straight into the existing endgame modal. */
 function freshCourtScore(){
-  return { a: 0, b: 0, serving: 'A', serverNum: 1, firstServe: true, serveUndo: [] };
+  return { a: 0, b: 0, serving: 'A', serverNum: 1, firstServe: true, serveUndo: [], wonAt: null };
 }
 function safeN(n){ return (n === null || n === undefined || isNaN(n)) ? 0 : n; }
 function getWinTarget(){ return state.session.winningScore || 11; }
@@ -1839,8 +1845,8 @@ function detectCourtWinner(sc){
   if (!sc) return null;
   const target = getWinTarget();
   const a = safeN(sc.a), b = safeN(sc.b);
-  if (a >= target && a - b >= 2) return 'a';
-  if (b >= target && b - a >= 2) return 'b';
+  if (a >= target) return 'a';
+  if (b >= target) return 'b';
   return null;
 }
 
@@ -1908,7 +1914,7 @@ function numberToWords(n){
   return String(n);
 }
 function speakScoreNumber(n){
-  if (n === 10) return 'Love';
+  if (n === 10) return 'Match';
   if (n >= 11) return numberToWords(n);
   return String(n);
 }
@@ -1916,9 +1922,9 @@ function scoreCallText(sc){
   const servingScore = sc.serving === 'A' ? safeN(sc.a) : safeN(sc.b);
   const otherScore = sc.serving === 'A' ? safeN(sc.b) : safeN(sc.a);
   const callServerNum = sc.firstServe ? 2 : sc.serverNum;
-  if (servingScore === 10 && otherScore === 10) return `All Love ${speakScoreNumber(callServerNum)}`;
-  if (servingScore === 10) return `Love, ${speakScoreNumber(otherScore)} ${speakScoreNumber(callServerNum)}`;
-  if (otherScore === 10) return `${speakScoreNumber(servingScore)} Love ${speakScoreNumber(callServerNum)}`;
+  if (servingScore === 10 && otherScore === 10) return `All Match ${speakScoreNumber(callServerNum)}`;
+  if (servingScore === 10) return `Match, ${speakScoreNumber(otherScore)} ${speakScoreNumber(callServerNum)}`;
+  if (otherScore === 10) return `${speakScoreNumber(servingScore)} Match ${speakScoreNumber(callServerNum)}`;
   if (servingScore === otherScore) return `All ${speakScoreNumber(servingScore)} ${speakScoreNumber(callServerNum)}`;
   return `${speakScoreNumber(servingScore)} ${speakScoreNumber(otherScore)} ${speakScoreNumber(callServerNum)}`;
 }
@@ -1939,11 +1945,14 @@ function adjustCourtScore(court, team, delta){
   const key = team === 'A' ? 'a' : 'b';
   const target = getWinTarget();
   sc[key] = Math.min(target, Math.max(0, safeN(sc[key]) + delta));
+  const winnerNow = detectCourtWinner(sc);
+  if (winnerNow && !sc.wonAt) sc.wonAt = Date.now(); // freeze the match clock right when the game is won
+  if (!winnerNow) sc.wonAt = null; // corrected back below target — resume the clock
   persist();
   if (delta > 0){
     pointUpTone();
     speakScoreOrMilestone(sc, sc[key]);
-    if (detectCourtWinner(sc)) setTimeout(winTone, 140);
+    if (winnerNow) setTimeout(winTone, 140);
   } else {
     pointDownTone();
     speakScoreCall(sc);
@@ -2080,19 +2089,32 @@ function renderCourts(){
         <button type="button" class="court-cta call" data-act="call" ${(enough && !ended) ? '' : 'disabled'}>${ended ? '🔒 Session ended' : '▶ Start Game'}</button>
       `;
     } else {
-      const elapsed = Date.now() - court.startTime;
-      const [a, b] = splitTeams(court.players);
       // Lazily attach a live score object if scoring was turned on mid-match.
       if (state.session.scoringEnabled && !court.score) court.score = freshCourtScore();
-      const scoreboard = state.session.scoringEnabled ? scoreboardHtml(court) : '';
+      const scoringOn = state.session.scoringEnabled;
+      const sc = court.score;
+      // Once a winner is reached, the clock freezes at the moment it was won
+      // instead of continuing to run while the court still shows "on court".
+      const clockEndTime = (scoringOn && sc && sc.wonAt) ? sc.wonAt : Date.now();
+      const elapsed = clockEndTime - court.startTime;
+      const [a, b] = splitTeams(court.players);
+      const scoreboard = scoringOn ? scoreboardHtml(court) : '';
+      // When scoring is on, the scoreboard already owns the vertical space,
+      // so the timer moves into a compact chip up in the header row instead
+      // of its own large centered block.
+      const timerChip = scoringOn ? `<span class="timer-chip" data-role="timer">${fmtClock(elapsed)}</span>` : '';
+      const timerBlock = scoringOn ? '' : `<div class="timer" data-role="timer">${fmtClock(elapsed)}</div>`;
       card.innerHTML = `
         <div class="court-top">
           <span class="court-name-wrap">${courtIcon}<input class="court-name" value="${esc(court.name)}" data-act="rename" maxlength="24" aria-label="Court name"></span>
-          <span class="status-badge playing">On court</span>
+          <span class="court-top-right">
+            <span class="status-badge playing">On court</span>
+            ${timerChip}
+          </span>
         </div>
         <div class="matchup">${teamColHtml(a,'a',gameSize)}<div class="vs-divider"></div>${teamColHtml(b,'b',gameSize)}</div>
         ${scoreboard}
-        <div class="timer" data-role="timer">${fmtClock(elapsed)}</div>
+        ${timerBlock}
         <button type="button" class="court-cta end" data-act="end">End game</button>
       `;
     }
@@ -2454,6 +2476,7 @@ setInterval(() => {
   document.querySelectorAll('.court-card.playing').forEach(card => {
     const court = state.courts.find(c => c.id === card.dataset.id);
     if (!court || !court.startTime) return;
+    if (state.session.scoringEnabled && court.score && court.score.wonAt) return; // frozen at the win
     const el = card.querySelector('[data-role="timer"]');
     if (el) el.textContent = fmtClock(Date.now() - court.startTime);
   });
