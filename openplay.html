@@ -655,12 +655,49 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
 .winner-note{font-size:.75rem;color:var(--slate);text-align:center;margin:-.6rem 0 1rem}
 .section-label{font-size:.78rem;font-weight:700;color:var(--slate);text-transform:uppercase;letter-spacing:.03em;margin:0 0 .5rem}
 
-.rankings-list{display:flex;flex-direction:column;gap:.4rem}
+/* ---------- Rankings modal: header, toolbar, summary ---------- */
+.rankings-modal-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin-bottom:.7rem}
+.rankings-modal-head h3{margin:0}
+.rankings-head-actions{display:flex;gap:.4rem;flex-shrink:0}
+.modal-icon-btn{
+  width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);background:#fff;color:var(--slate);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.modal-icon-btn svg{width:15px;height:15px}
+.modal-icon-btn:hover{border-color:var(--turf);color:var(--turf-deep);background:var(--turf-pale)}
+.modal-icon-btn:disabled{opacity:.5;cursor:not-allowed;border-color:var(--line);color:var(--slate);background:#fff}
+.modal-icon-btn.active{border-color:var(--turf);color:var(--turf-deep);background:var(--turf-pale)}
+.modal-icon-btn.spinning svg{animation:rankings-spin .8s linear infinite}
+@keyframes rankings-spin{to{transform:rotate(360deg)}}
+
+.rankings-toolbar{
+  display:flex;align-items:center;gap:.5rem;
+  border:1.5px solid var(--line);border-radius:var(--radius-sm);
+  padding:.5rem .7rem;margin-bottom:.8rem;background:var(--court);
+}
+.rankings-toolbar svg{width:15px;height:15px;color:var(--slate);flex-shrink:0}
+.rankings-toolbar input{
+  flex:1;min-width:0;border:none;background:none;font-size:.85rem;color:var(--ink);padding:0;
+}
+.rankings-toolbar input:focus{outline:none}
+.rankings-toolbar:focus-within{border-color:var(--turf);background:#fff}
+
+.rankings-summary{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.7rem}
+.rankings-summary .stat-chip{
+  font-family:var(--font-mono);font-size:.66rem;font-weight:700;letter-spacing:.01em;
+  background:var(--court);color:var(--slate);padding:.32rem .65rem;border-radius:99px;white-space:nowrap;
+}
+.rankings-summary .stat-chip b{color:var(--turf-deep);font-size:.78rem;margin-right:.15em}
+
+.rankings-list{display:flex;flex-direction:column;gap:.4rem;max-height:44vh;overflow-y:auto;padding:.1rem .15rem .1rem 0}
 .rank-row{
   display:flex;align-items:center;gap:.7rem;
   border:1.5px solid var(--line);border-radius:var(--radius-sm);
-  padding:.55rem .7rem;
+  padding:.55rem .7rem;background:#fff;
+  transition:border-color .15s,background .15s;
 }
+.rank-row:hover{border-color:var(--turf)}
 .rank-row .rank-num{
   font-family:var(--font-mono);font-weight:700;font-size:.85rem;color:var(--slate);
   width:22px;text-align:center;flex-shrink:0;
@@ -686,6 +723,30 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
 .rankings-empty{
   text-align:center;color:var(--slate);padding:2rem 1rem;font-size:.85rem;
   border:1.5px dashed var(--line);border-radius:var(--radius);
+}
+
+/* ---------- Rankings modal: full-screen expanded state ---------- */
+.modal.rankings-full{
+  max-width:min(1200px, calc(100vw - 2rem));
+  width:100%;
+  height:calc(100vh - 2.4rem);
+  max-height:calc(100vh - 2.4rem);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.modal.rankings-full .rankings-modal-head,
+.modal.rankings-full .rankings-toolbar,
+.modal.rankings-full .rankings-summary,
+.modal.rankings-full .modal-actions{flex-shrink:0}
+.modal.rankings-full #rankingsCaptureArea{display:flex;flex-direction:column;flex:1;min-height:0}
+.modal.rankings-full .rankings-list{
+  flex:1;max-height:none;overflow-y:auto;
+  display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  align-content:start;gap:.5rem .7rem;
+}
+.modal.rankings-full .rank-row{font-size:1.02rem;padding:.7rem .85rem}
+.modal.rankings-full .rank-row .rank-name{font-size:.95rem}
+@media (max-width:640px){
+  .modal.rankings-full .rankings-list{grid-template-columns:1fr}
 }
 
 /* ---------- Toasts ---------- */
@@ -755,6 +816,10 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
   <symbol id="i-trash" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 12H8L7 9Zm3 2v8h1v-8h-1Zm3 0v8h1v-8h-1Z"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16Zm-1 2v6.4l4.6 2.7 1-1.7-3.6-2.1V6Z"/></symbol>
   <symbol id="i-swap" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4 3 8l4 4V9h9V7H7V4Zm10 8-4 4v-3H4v-2h9v-3l4 4Z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h6V2H2v8h2V4Zm10-2v2h6v6h2V2h-8ZM4 14H2v8h8v-2H4v-6Zm16 6h-6v2h8v-8h-2v6Z"/></symbol>
+  <symbol id="i-collapse" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3H7v4H3v2h6V3Zm6 0v6h6V7h-4V3h-2ZM3 15v2h4v4h2v-6H3Zm14 6v-4h4v-2h-6v6h2Z"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path fill="currentColor" d="M9 3 7.5 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.5L15 3H9Zm3 5.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path fill="currentColor" d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z"/></symbol>
 </svg>
 
 <header class="topbar">
@@ -968,10 +1033,27 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
 
 <!-- Rankings modal -->
 <div class="overlay" id="rankingsOverlay" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Rankings">
-    <h3>🏆 Rankings</h3>
-    <p class="winner-note" style="margin:-.3rem 0 .8rem">Games played · win–loss record · win rate.</p>
-    <div class="rankings-list" id="rankingsList"></div>
+  <div class="modal" id="rankingsModal" role="dialog" aria-modal="true" aria-label="Rankings">
+    <div class="rankings-modal-head">
+      <h3>🏆 Rankings</h3>
+      <div class="rankings-head-actions">
+        <button class="modal-icon-btn" type="button" id="rankingsExpandBtn" title="Expand to full screen" aria-label="Expand to full screen">
+          <svg viewBox="0 0 24 24"><use href="#i-expand"/></svg>
+        </button>
+        <button class="modal-icon-btn" type="button" id="rankingsShotBtn" title="Save as image" aria-label="Save rankings as image">
+          <svg viewBox="0 0 24 24"><use href="#i-camera"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="rankings-toolbar">
+      <svg viewBox="0 0 24 24"><use href="#i-search"/></svg>
+      <input type="text" id="rankingsSearch" placeholder="Search a player…" aria-label="Search rankings">
+    </div>
+    <div id="rankingsCaptureArea">
+      <p class="winner-note" id="rankingsCaptureNote" style="margin:-.1rem 0 .7rem">Games played · win–loss record · win rate.</p>
+      <div class="rankings-summary" id="rankingsSummary"></div>
+      <div class="rankings-list" id="rankingsList"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn primary" id="rankingsDone">Done</button>
     </div>
@@ -2486,57 +2568,152 @@ setInterval(() => {
 
 /* ================= Rankings modal ================= */
 const rankingsOverlay = $('#rankingsOverlay');
+const rankingsModal = $('#rankingsModal');
 const rankingsList = $('#rankingsList');
+const rankingsSummary = $('#rankingsSummary');
+const rankingsSearch = $('#rankingsSearch');
+const rankingsExpandBtn = $('#rankingsExpandBtn');
+const rankingsShotBtn = $('#rankingsShotBtn');
+let rankingsSearchTerm = '';
+let rankingsExpanded = false;
 
-function renderRankings(){
-  const rows = Object.entries(state.playerStats)
+function getRankingRows(){
+  return Object.entries(state.playerStats)
     .map(([name, stats]) => ({
       name, wins: stats.wins || 0, games: stats.games || 0,
       scoreSum: stats.scoreSum || 0, scoreGames: stats.scoreGames || 0
     }))
     .filter(r => r.games > 0)
     .sort((a,b) => b.wins - a.wins || (b.wins/b.games) - (a.wins/a.games) || b.games - a.games || a.name.localeCompare(b.name));
+}
 
-  if (rows.length === 0){
+function rankRowHtml(r, rank){
+  const losses = r.games - r.wins;
+  const pct = Math.round((r.wins / r.games) * 100);
+  const topClass = rank <= 3 ? ' top' + rank : '';
+  const avgScore = r.scoreGames > 0 ? (r.scoreSum / r.scoreGames) : null;
+  const avgHtml = avgScore !== null
+    ? `<span class="rank-avg" title="Average score per game">AVG ${avgScore.toFixed(1)}</span>`
+    : '';
+  const mvpHtml = rank === 1 ? `<span class="mvp-badge" title="Top of the rankings this session">👑 MVP</span>` : '';
+  return `
+    <div class="rank-row${topClass}">
+      <span class="rank-num">${rank}</span>
+      <div class="rank-main">
+        <div class="rank-top-line">
+          <span class="rank-name">${esc(r.name)}</span>
+          ${mvpHtml}
+          <span class="rank-pct">${pct}%</span>
+        </div>
+        <div class="rank-meta-line">
+          <span class="rank-games" title="${r.games} games played">${r.games} ${r.games === 1 ? 'GAME' : 'GAMES'} PLAYED</span>
+          ${avgHtml}
+          <span class="rank-record">${r.wins}-${losses}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRankings(){
+  const allRows = getRankingRows();
+
+  if (allRows.length === 0){
+    rankingsSummary.innerHTML = '';
     rankingsList.innerHTML = '<div class="rankings-empty">No games recorded yet.<br>Rankings fill in once you pick a winner after a match.</div>';
     return;
   }
-  rankingsList.innerHTML = rows.map((r, idx) => {
-    const rank = idx + 1;
-    const losses = r.games - r.wins;
-    const pct = Math.round((r.wins / r.games) * 100);
-    const topClass = rank <= 3 ? ' top' + rank : '';
-    const avgScore = r.scoreGames > 0 ? (r.scoreSum / r.scoreGames) : null;
-    const avgHtml = avgScore !== null
-      ? `<span class="rank-avg" title="Average score per game">AVG ${avgScore.toFixed(1)}</span>`
-      : '';
-    const mvpHtml = rank === 1 ? `<span class="mvp-badge" title="Top of the rankings this session">👑 MVP</span>` : '';
-    return `
-      <div class="rank-row${topClass}">
-        <span class="rank-num">${rank}</span>
-        <div class="rank-main">
-          <div class="rank-top-line">
-            <span class="rank-name">${esc(r.name)}</span>
-            ${mvpHtml}
-            <span class="rank-pct">${pct}%</span>
-          </div>
-          <div class="rank-meta-line">
-            <span class="rank-games" title="${r.games} games played">${r.games} ${r.games === 1 ? 'GAME' : 'GAMES'} PLAYED</span>
-            ${avgHtml}
-            <span class="rank-record">${r.wins}-${losses}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
+
+  const mostGames = Math.max(...allRows.map(r => r.games));
+  const avgWinRate = Math.round(allRows.reduce((s, r) => s + (r.wins / r.games), 0) / allRows.length * 100);
+  rankingsSummary.innerHTML = `
+    <span class="stat-chip"><b>${allRows.length}</b> ${allRows.length === 1 ? 'player' : 'players'}</span>
+    <span class="stat-chip"><b>${mostGames}</b> most games played</span>
+    <span class="stat-chip"><b>${avgWinRate}%</b> avg win rate</span>
+  `;
+
+  const term = rankingsSearchTerm.trim().toLowerCase();
+  const rows = term ? allRows.filter(r => r.name.toLowerCase().includes(term)) : allRows;
+
+  if (rows.length === 0){
+    rankingsList.innerHTML = `<div class="rankings-empty">No players match "${esc(rankingsSearchTerm)}".</div>`;
+    return;
+  }
+  rankingsList.innerHTML = rows.map(r => rankRowHtml(r, allRows.indexOf(r) + 1)).join('');
+}
+
+function setRankingsExpandIcon(){
+  rankingsExpandBtn.innerHTML = rankingsExpanded
+    ? '<svg viewBox="0 0 24 24"><use href="#i-collapse"/></svg>'
+    : '<svg viewBox="0 0 24 24"><use href="#i-expand"/></svg>';
+  const label = rankingsExpanded ? 'Exit full screen' : 'Expand to full screen';
+  rankingsExpandBtn.setAttribute('aria-label', label);
+  rankingsExpandBtn.title = label;
+  rankingsExpandBtn.classList.toggle('active', rankingsExpanded);
 }
 
 function openRankings(){
+  rankingsSearchTerm = '';
+  rankingsSearch.value = '';
+  rankingsExpanded = false;
+  rankingsModal.classList.remove('rankings-full');
+  setRankingsExpandIcon();
   renderRankings();
   rankingsOverlay.hidden = false;
 }
 $('#rankingsBtn').addEventListener('click', openRankings);
 $('#rankingsDone').addEventListener('click', () => { rankingsOverlay.hidden = true; });
+
+rankingsSearch.addEventListener('input', (e) => {
+  rankingsSearchTerm = e.target.value;
+  renderRankings();
+});
+
+rankingsExpandBtn.addEventListener('click', () => {
+  rankingsExpanded = !rankingsExpanded;
+  rankingsModal.classList.toggle('rankings-full', rankingsExpanded);
+  setRankingsExpandIcon();
+});
+
+let html2canvasPromise = null;
+function loadHtml2Canvas(){
+  if (window.html2canvas) return Promise.resolve(window.html2canvas);
+  if (html2canvasPromise) return html2canvasPromise;
+  html2canvasPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.onload = () => resolve(window.html2canvas);
+    s.onerror = () => { html2canvasPromise = null; reject(new Error('load-failed')); };
+    document.head.appendChild(s);
+  });
+  return html2canvasPromise;
+}
+
+rankingsShotBtn.addEventListener('click', async () => {
+  if (rankingsShotBtn.disabled) return;
+  if (getRankingRows().length === 0){ toast('No rankings to capture yet'); return; }
+
+  rankingsShotBtn.disabled = true;
+  rankingsShotBtn.classList.add('spinning');
+  try{
+    const html2canvas = await loadHtml2Canvas();
+    const target = $('#rankingsCaptureArea');
+    const canvas = await html2canvas(target, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+    const link = document.createElement('a');
+    link.download = `rankings-${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    toast('Rankings image saved');
+  } catch(err){
+    console.error(err);
+    toast('Could not create the image — check your connection and try again');
+  } finally {
+    rankingsShotBtn.disabled = false;
+    rankingsShotBtn.classList.remove('spinning');
+  }
+});
 
 /* ================= Settings modal ================= */
 const settingsOverlay = $('#settingsOverlay');
