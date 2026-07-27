@@ -164,12 +164,18 @@ input,select{font-family:inherit}
 body.session-locked .quick-add-panel{opacity:.55;pointer-events:none}
 
 .arrivals-panel{
-  margin:0 1.1rem .8rem;padding:.65rem .75rem;
+  margin:0 1.1rem .8rem;padding:.55rem .75rem;
   background:#FBF3E7;border:1.5px solid #EFDDBB;border-radius:var(--radius);
-  display:flex;flex-direction:column;gap:.5rem;
 }
 .arrivals-panel[hidden]{display:none}
-.arrivals-head{display:flex;align-items:center;gap:.5rem}
+.arrivals-panel[open]{padding-bottom:.65rem}
+.arrivals-head{
+  display:flex;align-items:center;gap:.5rem;cursor:pointer;user-select:none;list-style:none;
+  padding:.1rem 0;
+}
+.arrivals-head::-webkit-details-marker{display:none}
+.arrivals-chev{width:12px;height:12px;flex-shrink:0;color:#8a6d2f;transition:transform .15s}
+.arrivals-panel[open] .arrivals-chev{transform:rotate(90deg)}
 .arrivals-title{
   font-family:var(--font-mono);font-size:.68rem;font-weight:700;letter-spacing:.03em;
   text-transform:uppercase;color:#8a6d2f;
@@ -181,7 +187,7 @@ body.session-locked .quick-add-panel{opacity:.55;pointer-events:none}
 }
 .checkin-all-btn:hover{background:var(--turf-deep)}
 .checkin-all-btn:disabled{opacity:.4;cursor:default}
-.arrivals-list{display:flex;flex-direction:column;gap:.4rem}
+.arrivals-list{display:flex;flex-direction:column;gap:.4rem;margin-top:.55rem;max-height:220px;overflow-y:auto;padding-right:.1rem}
 .arrival-row{
   display:flex;align-items:center;gap:.5rem;
   background:#fff;border:1.5px solid #EFDDBB;border-radius:var(--radius-sm);
@@ -862,14 +868,15 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
     </details>
     <p class="add-hint" id="addHint">Add players here, then check them in when they arrive to join the stack.</p>
 
-    <div class="arrivals-panel" id="arrivalsPanel" hidden>
-      <div class="arrivals-head">
+    <details class="arrivals-panel" id="arrivalsPanel" hidden>
+      <summary class="arrivals-head">
+        <svg class="arrivals-chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg>
         <span class="arrivals-title">Waiting to check in</span>
         <span class="count-badge" id="arrivalsBadge">0</span>
         <button type="button" class="checkin-all-btn" id="checkInAllBtn">Check in all</button>
-      </div>
+      </summary>
       <div class="arrivals-list" id="arrivalsList"></div>
-    </div>
+    </details>
 
     <div class="quick-add-panel" id="quickAddPanel" hidden>
       <div class="quick-add-head">
@@ -1782,6 +1789,7 @@ function removeArrival(id){
   toast(name + ' removed');
   renderAll(); persist();
 }
+let prevArrivalsCount = 0;
 function renderArrivals(){
   const panel = $('#arrivalsPanel');
   const badge = $('#arrivalsBadge');
@@ -1790,6 +1798,8 @@ function renderArrivals(){
   if (!panel || !listEl) return;
   if (badge) badge.textContent = state.arrivals.length;
   panel.hidden = state.arrivals.length === 0;
+  if (prevArrivalsCount === 0 && state.arrivals.length > 0) panel.open = true;
+  prevArrivalsCount = state.arrivals.length;
   if (allBtn) allBtn.disabled = state.arrivals.length === 0 || isSessionEnded();
   listEl.innerHTML = state.arrivals.map(entry => `
     <div class="arrival-row" data-id="${entry.id}">
@@ -1812,7 +1822,9 @@ if (arrivalsListEl){
 }
 const checkInAllBtnEl = $('#checkInAllBtn');
 if (checkInAllBtnEl){
-  checkInAllBtnEl.addEventListener('click', () => {
+  checkInAllBtnEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (isSessionEnded()){ toast('Session has ended — resume it to check players in'); return; }
     checkInAllArrivals();
   });
