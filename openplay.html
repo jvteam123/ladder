@@ -1766,6 +1766,7 @@ function checkInArrival(id){
   const idx = state.arrivals.findIndex(a => a.id === id);
   if (idx === -1) return;
   const entry = state.arrivals[idx];
+  if (!confirm('Check in ' + entry.name + ' and add them to the stack?')) return;
   state.arrivals.splice(idx, 1);
   state.stack.push({ id: nextId('p'), name: entry.name, joinedAt: Date.now(), tag: 'new' });
   toast(entry.name + ' checked in and added to the stack');
@@ -1774,17 +1775,20 @@ function checkInArrival(id){
 function checkInAllArrivals(){
   if (state.arrivals.length === 0) return;
   const names = state.arrivals.map(a => a.name);
+  const label = names.length > 1 ? names.length + ' players' : names[0];
+  if (!confirm('Check in ' + label + ' and add them to the stack?')) return;
   state.arrivals.forEach(entry => {
     state.stack.push({ id: nextId('p'), name: entry.name, joinedAt: Date.now(), tag: 'new' });
   });
   state.arrivals = [];
-  toast((names.length > 1 ? names.length + ' players' : names[0]) + ' checked in and added to the stack');
+  toast(label + ' checked in and added to the stack');
   renderAll(); persist();
 }
 function removeArrival(id){
   const idx = state.arrivals.findIndex(a => a.id === id);
   if (idx === -1) return;
   const name = state.arrivals[idx].name;
+  if (!confirm('Remove ' + name + ' from the waiting-to-check-in list?')) return;
   state.arrivals.splice(idx, 1);
   toast(name + ' removed');
   renderAll(); persist();
