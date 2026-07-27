@@ -406,6 +406,13 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
   font-family:var(--font-mono);font-size:.6rem;font-weight:700;letter-spacing:.03em;
   color:#9fc4b8;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
 }
+.serve-set-btn{
+  font-family:var(--font-mono);font-size:.58rem;font-weight:700;letter-spacing:.02em;
+  text-transform:uppercase;color:#ffb595;background:rgba(228,105,59,.16);
+  border:1px solid rgba(228,105,59,.5);border-radius:6px;padding:.2rem .4rem;cursor:pointer;
+  white-space:nowrap;
+}
+.serve-set-btn:hover{background:rgba(228,105,59,.3)}
 .sbl-stepper{display:flex;align-items:center;gap:.55rem}
 .sbl-num{font-family:var(--font-mono);font-size:1.5rem;font-weight:700;min-width:1.6ch;text-align:center;color:#fff}
 .score-btn{
@@ -1861,6 +1868,67 @@ function pointDownTone(){ scoreTone(320, 0.12, 'sine', 0.16); }
 function sideOutTone(){ scoreTone(660, 0.09, 'square', 0.15); setTimeout(() => scoreTone(415, 0.16, 'square', 0.15), 90); }
 function winTone(){ [660,880,1100].forEach((f,i) => setTimeout(() => scoreTone(f, 0.18, 'triangle', 0.2), i*110)); }
 
+/* ---- Voice score announcer (Web Speech API) ----
+   Speaks the standard doubles pickleball score call: the serving team's
+   own score first, then the receiving team's score, then the server
+   number — e.g. "2 1 1". Side-outs are announced as "Side out" followed
+   by the new call. Follows the same "Sound on call-up" toggle as the
+   point/side-out tones above. */
+if ('speechSynthesis' in window){
+  try{
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', function(){ window.speechSynthesis.getVoices(); });
+  }catch(e){}
+}
+function speakNow(text){
+  try{
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.05;
+    utter.volume = 1;
+    window.speechSynthesis.speak(utter);
+  }catch(e){ /* speech not available — fail silently */ }
+}
+function speakScoreUtterance(text){
+  if (!state.session.soundOn) return;
+  if (!('speechSynthesis' in window)) return;
+  try{
+    window.speechSynthesis.cancel();
+    setTimeout(() => speakNow(text), 50);
+  }catch(e){}
+}
+const NUMBER_WORDS_ONES = ['Zero','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+const NUMBER_WORDS_TENS = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+function numberToWords(n){
+  n = Math.max(0, Math.round(n));
+  if (n < 20) return NUMBER_WORDS_ONES[n];
+  if (n < 100){
+    const tens = Math.floor(n / 10), ones = n % 10;
+    return NUMBER_WORDS_TENS[tens] + (ones ? ' ' + NUMBER_WORDS_ONES[ones] : '');
+  }
+  return String(n);
+}
+function speakScoreNumber(n){
+  if (n === 10) return 'Love';
+  if (n >= 11) return numberToWords(n);
+  return String(n);
+}
+function scoreCallText(sc){
+  const servingScore = sc.serving === 'A' ? safeN(sc.a) : safeN(sc.b);
+  const otherScore = sc.serving === 'A' ? safeN(sc.b) : safeN(sc.a);
+  const callServerNum = sc.firstServe ? 2 : sc.serverNum;
+  if (servingScore === 10 && otherScore === 10) return `All Love ${speakScoreNumber(callServerNum)}`;
+  if (servingScore === 10) return `Love, ${speakScoreNumber(otherScore)} ${speakScoreNumber(callServerNum)}`;
+  if (otherScore === 10) return `${speakScoreNumber(servingScore)} Love ${speakScoreNumber(callServerNum)}`;
+  if (servingScore === otherScore) return `All ${speakScoreNumber(servingScore)} ${speakScoreNumber(callServerNum)}`;
+  return `${speakScoreNumber(servingScore)} ${speakScoreNumber(otherScore)} ${speakScoreNumber(callServerNum)}`;
+}
+function speakScoreCall(sc){ speakScoreUtterance(scoreCallText(sc)); }
+function speakSideOut(sc){ speakScoreUtterance('Side out. ' + scoreCallText(sc)); }
+function speakScoreOrMilestone(sc, scoringTeamScore){
+  if (scoringTeamScore === getWinTarget()) speakScoreUtterance('Congratulations!');
+  else speakScoreCall(sc);
+}
+
 function adjustCourtScore(court, team, delta){
   const sc = court.score;
   if (!sc || detectCourtWinner(sc)) return;
@@ -1874,10 +1942,22 @@ function adjustCourtScore(court, team, delta){
   persist();
   if (delta > 0){
     pointUpTone();
+    speakScoreOrMilestone(sc, sc[key]);
     if (detectCourtWinner(sc)) setTimeout(winTone, 140);
   } else {
     pointDownTone();
+    speakScoreCall(sc);
   }
+  renderCourts();
+}
+// Lets you pick which team serves first — only allowed before any point
+// has been scored on a brand-new game (firstServe still true, 0-0).
+function setInitialServer(court, team){
+  const sc = court.score;
+  if (!sc || !sc.firstServe) return;
+  if (safeN(sc.a) !== 0 || safeN(sc.b) !== 0) return;
+  sc.serving = team;
+  persist();
   renderCourts();
 }
 function courtSideOut(court){
@@ -1890,6 +1970,7 @@ function courtSideOut(court){
   sc.firstServe = false;
   persist();
   sideOutTone();
+  speakSideOut(sc);
   renderCourts();
 }
 function courtAdvanceServe(court){
@@ -1900,6 +1981,7 @@ function courtAdvanceServe(court){
   sc.serverNum = 2;
   persist();
   sideOutTone();
+  speakScoreCall(sc);
   renderCourts();
 }
 function courtUndoServe(court){
@@ -1917,11 +1999,15 @@ function scoreboardHtml(court){
   const servingA = sc.serving === 'A', servingB = sc.serving === 'B';
   const serveLabel = sc.firstServe ? '1st Serve' : ('Serve ' + sc.serverNum);
   const target = getWinTarget();
+  const canPickFirstServer = sc.firstServe && safeN(sc.a) === 0 && safeN(sc.b) === 0;
+  const serveTagA = servingA ? ` · 🎾 ${serveLabel}` : (canPickFirstServer ? `<button type="button" class="serve-set-btn" data-act="set-first-server" data-team="A">Make 1st server</button>` : '');
+  const serveTagB = servingB ? ` · 🎾 ${serveLabel}` : (canPickFirstServer ? `<button type="button" class="serve-set-btn" data-act="set-first-server" data-team="B">Make 1st server</button>` : '');
   return `
     <div class="scoreboard-live ${winnerSide ? 'has-winner' : ''}">
       <div class="sbl-row">
         <div class="sbl-team">
-          <span class="sbl-label">${winnerSide === 'a' ? '🏆 ' : ''}Team A${servingA ? ' · 🎾 ' + serveLabel : ''}</span>
+          <span class="sbl-label">${winnerSide === 'a' ? '🏆 ' : ''}Team A${servingA ? serveTagA : ''}</span>
+          ${!servingA ? serveTagA : ''}
           <div class="sbl-stepper">
             <button type="button" class="score-btn score-btn-minus" data-act="score-minus" data-team="A" aria-label="Decrease Team A score" ${(winnerSide || !servingA || safeN(sc.a) <= 0) ? 'disabled' : ''}>−</button>
             <span class="sbl-num">${safeN(sc.a)}</span>
@@ -1929,7 +2015,8 @@ function scoreboardHtml(court){
           </div>
         </div>
         <div class="sbl-team">
-          <span class="sbl-label">${winnerSide === 'b' ? '🏆 ' : ''}Team B${servingB ? ' · 🎾 ' + serveLabel : ''}</span>
+          <span class="sbl-label">${winnerSide === 'b' ? '🏆 ' : ''}Team B${servingB ? serveTagB : ''}</span>
+          ${!servingB ? serveTagB : ''}
           <div class="sbl-stepper">
             <button type="button" class="score-btn score-btn-minus" data-act="score-minus" data-team="B" aria-label="Decrease Team B score" ${(winnerSide || !servingB || safeN(sc.b) <= 0) ? 'disabled' : ''}>−</button>
             <span class="sbl-num">${safeN(sc.b)}</span>
@@ -2028,6 +2115,7 @@ courtsGrid.addEventListener('click', (e) => {
   if (btn.dataset.act === 'score-plus') adjustCourtScore(court, btn.dataset.team, 1);
   if (btn.dataset.act === 'score-minus') adjustCourtScore(court, btn.dataset.team, -1);
   if (btn.dataset.act === 'side-out') courtSideOut(court);
+  if (btn.dataset.act === 'set-first-server') setInitialServer(court, btn.dataset.team);
   if (btn.dataset.act === 'advance-serve') courtAdvanceServe(court);
   if (btn.dataset.act === 'undo-serve') courtUndoServe(court);
 });
