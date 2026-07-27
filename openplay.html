@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Paddle Stack Queue</title>
+<title>Renzku Smart Stack</title>
 <meta name="theme-color" content="#1B2A28">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -62,12 +62,10 @@ input,select{font-family:inherit}
 .topbar .session-name{
   font-family:var(--font-display);
   font-size:1.05rem;letter-spacing:.02em;
-  background:transparent;border:none;color:#fff;
-  border-bottom:2px solid transparent;
-  padding:2px 2px;max-width:40vw;
-  transition:border-color .15s;
+  color:#fff;font-weight:700;
+  max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.topbar .session-name:hover,.topbar .session-name:focus{border-bottom-color:rgba(255,255,255,.4)}
+
 .topbar .spacer{flex:1}
 .topbar .pill{
   font-family:var(--font-mono);font-size:.72rem;font-weight:600;
@@ -452,13 +450,13 @@ body.session-locked .arrivals-panel{opacity:.55;pointer-events:none}
 /* ---------- Modals ---------- */
 .overlay{
   position:fixed;inset:0;background:rgba(21,36,32,.5);backdrop-filter:blur(2px);
-  display:flex;align-items:center;justify-content:center;padding:1rem;z-index:100;
+  display:flex;align-items:center;justify-content:center;padding:1.2rem 1rem;z-index:100;overflow-y:auto;
 }
 .overlay[hidden]{display:none}
 .modal{
   background:#fff;border-radius:16px;max-width:440px;width:100%;
-  max-height:88vh;overflow-y:auto;box-shadow:var(--shadow-md);
-  padding:1.4rem 1.4rem 1.2rem;
+  max-height:calc(100vh - 2.4rem);overflow-y:auto;box-shadow:var(--shadow-md);
+  padding:1.6rem 1.4rem 1.8rem;margin:auto;
 }
 .modal h3{font-family:var(--font-display);font-size:1.1rem;margin:0 0 1rem}
 .field{margin-bottom:1rem}
@@ -718,7 +716,7 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
   <div class="logo">
     <svg viewBox="0 0 20 28"><use href="#i-paddle"/></svg>
   </div>
-  <input id="sessionNameInput" class="session-name" value="Open Play" aria-label="Session name" maxlength="40">
+  <span class="session-name">Renzku Smart Stack</span>
   <div class="spacer"></div>
   <span class="pill" id="stackCountPill">0 in stack</span>
   <button class="icon-btn" id="rankingsBtn" aria-label="Rankings"><svg viewBox="0 0 24 24"><use href="#i-trophy"/></svg></button>
@@ -746,9 +744,9 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
       <button type="submit" aria-label="Add player"><svg viewBox="0 0 24 24" style="width:16px;height:16px;vertical-align:-3px"><use href="#i-plus"/></svg> Add</button>
     </form>
     <details class="bulk-add-wrap" id="bulkAddWrap">
-      <summary class="bulk-add-toggle">+ Add multiple players (one per line)</summary>
+      <summary class="bulk-add-toggle">+ Add multiple players</summary>
       <div class="bulk-add-body">
-        <textarea id="bulkNameInput" rows="5" placeholder="renz&#10;mae&#10;jean" spellcheck="false"></textarea>
+        <textarea id="bulkNameInput" rows="5" placeholder="Renzku&#10;Mae&#10;Anthony&#10;Jen" spellcheck="false"></textarea>
         <button type="button" id="bulkAddBtn">Add All Players</button>
       </div>
     </details>
@@ -1024,7 +1022,7 @@ function defaultCourts(n){
 
 function freshState(){
   return {
-    session: { name: 'Open Play', gameSize: 4, soundOn: true, status: 'active', targetGamesEnabled: false, targetGamesPerPlayer: 7, avoidRepeatTeammates: false, fixedDuos: [] }, // status: 'active' | 'ended'
+    session: { name: 'Renzku Smart Stack', gameSize: 4, soundOn: true, status: 'active', targetGamesEnabled: false, targetGamesPerPlayer: 7, avoidRepeatTeammates: false, fixedDuos: [] }, // status: 'active' | 'ended'
     courts: defaultCourts(4),
     arrivals: [],        // {id, name, addedAt} — added but not yet checked in; not part of the live queue
     stack: [],           // {id, name, joinedAt, tag: 'new'|'queued'}
@@ -1044,7 +1042,6 @@ function nextId(prefix){ return prefix + (Date.now().toString(36)) + (uid++); }
 
 /* ================= DOM refs ================= */
 const $ = (sel) => document.querySelector(sel);
-const sessionNameInput = $('#sessionNameInput');
 const stackList = $('#stackList');
 const stackBadge = $('#stackBadge');
 const stackCountPill = $('#stackCountPill');
@@ -2184,11 +2181,6 @@ setInterval(() => {
 }, 1000);
 
 /* ================= Session name ================= */
-sessionNameInput.addEventListener('change', () => {
-  state.session.name = sessionNameInput.value.trim() || 'Open Play';
-  sessionNameInput.value = state.session.name;
-  persist();
-});
 
 /* ================= Rankings modal ================= */
 const rankingsOverlay = $('#rankingsOverlay');
@@ -2411,8 +2403,7 @@ avoidRepeatToggle.addEventListener('change', () => {
 });
 
 settingsSessionName.addEventListener('change', () => {
-  state.session.name = settingsSessionName.value.trim() || 'Open Play';
-  sessionNameInput.value = state.session.name;
+  state.session.name = settingsSessionName.value.trim() || 'Renzku Smart Stack';
   persist();
 });
 
@@ -2548,7 +2539,6 @@ function renderAll(){
     if (typeof state.session.avoidRepeatTeammates !== 'boolean') state.session.avoidRepeatTeammates = false;
     if (!Array.isArray(state.session.fixedDuos)) state.session.fixedDuos = [];
   }
-  sessionNameInput.value = state.session.name;
   renderRosterList();
   renderAll();
   if (window.innerWidth > 880){
