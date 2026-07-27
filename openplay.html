@@ -128,6 +128,15 @@ input,select{font-family:inherit}
 }
 .add-form button:hover{background:var(--turf-deep)}
 .add-hint{padding:0 1.1rem .7rem;font-size:.72rem;color:var(--slate)}
+.bulk-add-wrap{margin:.2rem 1.1rem .7rem;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.bulk-add-toggle{display:block;padding:.55rem .75rem;font-size:.78rem;font-weight:600;color:var(--turf);cursor:pointer;user-select:none;list-style:none}
+.bulk-add-toggle::-webkit-details-marker{display:none}
+.bulk-add-toggle:hover{background:var(--ice)}
+.bulk-add-body{padding:.5rem .75rem .75rem;display:flex;flex-direction:column;gap:.5rem;border-top:1.5px solid var(--line)}
+.bulk-add-body textarea{width:100%;resize:vertical;border:1.5px solid var(--line);border-radius:8px;padding:.45rem .6rem;font-size:.82rem;font-family:inherit;min-height:90px;background:#fff}
+.bulk-add-body textarea:focus{outline:none;border-color:var(--turf)}
+.bulk-add-body button{align-self:flex-end;padding:.42rem 1rem;background:var(--turf);color:#fff;border:none;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer}
+.bulk-add-body button:hover{background:var(--turf-deep)}
 
 .quick-add-panel{
   margin:0 1.1rem .8rem;padding:.65rem .75rem;
@@ -736,6 +745,13 @@ body.session-locked .paddle .reorder,body.session-locked .paddle .remove-btn,bod
       <datalist id="rosterList"></datalist>
       <button type="submit" aria-label="Add player"><svg viewBox="0 0 24 24" style="width:16px;height:16px;vertical-align:-3px"><use href="#i-plus"/></svg> Add</button>
     </form>
+    <details class="bulk-add-wrap" id="bulkAddWrap">
+      <summary class="bulk-add-toggle">+ Add multiple players (one per line)</summary>
+      <div class="bulk-add-body">
+        <textarea id="bulkNameInput" rows="5" placeholder="renz&#10;mae&#10;jean" spellcheck="false"></textarea>
+        <button type="button" id="bulkAddBtn">Add All Players</button>
+      </div>
+    </details>
     <p class="add-hint" id="addHint">Add players here, then check them in when they arrive to join the stack.</p>
 
     <div class="arrivals-panel" id="arrivalsPanel" hidden>
@@ -1585,6 +1601,20 @@ addForm.addEventListener('submit', (e) => {
   addNamesToArrivals(names);
 });
 
+/* ---- Bulk add: one name per line ---- */
+$('#bulkAddBtn').addEventListener('click', function(){
+  if (isSessionEnded()){ toast('Session has ended — resume it to add players'); return; }
+  const textarea = $('#bulkNameInput');
+  const names = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!names.length) return;
+  textarea.value = '';
+  // Collapse the details panel after adding
+  const wrap = $('#bulkAddWrap');
+  if (wrap) wrap.removeAttribute('open');
+  addNamesToArrivals(names);
+  toast(names.length + ' player' + (names.length > 1 ? 's' : '') + ' added');
+});
+
 /* ---- Check-in: moves a waiting arrival into the live stack ---- */
 function checkInArrival(id){
   const idx = state.arrivals.findIndex(a => a.id === id);
@@ -1787,7 +1817,7 @@ function renderCourts(){
         </div>
         ${lastResultHtml}
         ${matchupHtml}
-        <button type="button" class="court-cta call" data-act="call" ${(enough && !ended) ? '' : 'disabled'}>${ended ? '🔒 Session ended' : 'Call next ' + gameSize}</button>
+        <button type="button" class="court-cta call" data-act="call" ${(enough && !ended) ? '' : 'disabled'}>${ended ? '🔒 Session ended' : '▶ Start Game'}</button>
       `;
     } else {
       const elapsed = Date.now() - court.startTime;
