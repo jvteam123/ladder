@@ -298,6 +298,7 @@ textarea{resize:vertical; min-height:90px; font-family:var(--font-mono); font-si
 .pill-paused{background:var(--surface-3); color:var(--text-faint); border-color:var(--line-soft);}
 .pill-active{background:rgba(215,242,61,0.12); color:var(--ball); border-color:rgba(215,242,61,0.25);}
 .pill-cond-ok{background:rgba(62,213,152,0.08); color:var(--win); border-color:rgba(62,213,152,0.2);}
+.pill-cond-checkedin{background:rgba(215,242,61,0.10); color:var(--ball); border-color:rgba(215,242,61,0.28);}
 .pill-cond-tired{background:rgba(79,168,255,0.10); color:var(--court); border-color:rgba(79,168,255,0.25);}
 .pill-cond-injured{background:rgba(255,107,107,0.10); color:var(--loss); border-color:rgba(255,107,107,0.25);}
 .pill-cond-cantplay{background:rgba(255,107,107,0.10); color:var(--loss); border-color:rgba(255,107,107,0.25);}
