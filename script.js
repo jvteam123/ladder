@@ -1494,6 +1494,7 @@ function findLivePlayerSlot(id){
    doesn't need to change — only the player-facing control does.
    ============================================================ */
 const STATUS_DEFS = {
+  checked_in: { label:'✅ Checked In', desc:'Just arrived — jumps to the front of the queue.', pillClass:'pill-cond-checkedin' },
   ok:         { label:'🟢 Active',     desc:'Ready to play, in the rotation.',          pillClass:'pill-cond-ok' },
   tired:      { label:'😴 Tired',       desc:'Sits out of new matches until cleared.',   pillClass:'pill-cond-tired' },
   injured:    { label:'🤕 Injured',     desc:'Sits out of new matches until cleared.',   pillClass:'pill-cond-injured' },
@@ -1564,6 +1565,35 @@ function setPlayerStatus(id, status){
     }
     saveAll(); renderAll(); closeModal();
     toast(`${p.name} marked Gone Home.`, 'success');
+    return;
+  }
+
+  if(status === 'checked_in'){
+    const wasInactive = !p.active;
+    p.active = true;
+    p.condition = 'ok';
+    // Paddle Stack: brand-new arrivals jump straight to the front of the
+    // queue, same as the tap-to-arrive checklist — but only if they aren't
+    // already on a court or already sitting somewhere in the stack.
+    if (wasInactive && state.paddleStack) {
+      const ps = state.paddleStack;
+      const onCourt = ps.courts.some(c => c.teamA.includes(id) || c.teamB.includes(id));
+      const inQueue = ps.queue.some(e => e.id === id);
+      const inWBlock = ps.wBlock.some(e => e.id === id);
+      const inLBlock = ps.lBlock.some(e => e.id === id);
+      if (!onCourt && !inQueue && !inWBlock && !inLBlock) {
+        psInsertNewArrival(ps, id);
+        psFillCourts();
+        saveAll(); renderAll(); closeModal();
+        toast(`${p.name} checked in — moved to front of queue! 🆕`, 'success');
+        return;
+      }
+    }
+    saveAll();
+    closeModal();
+    const balanced = wasInactive ? maybeAutoBalanceCheckIn(p) : false;
+    if(!balanced) toast(`${p.name} checked in.`, 'success');
+    renderAll();
     return;
   }
 
